@@ -1,34 +1,29 @@
 ---
-title: Filtering memberships by user ID
-when: When you need to filter memberships to show only those belonging to a specific user
+title: Filtering memberships by user
+when: When you need to see memberships for a specific user
 ---
 
-# Filtering memberships by user ID
+# Filtering memberships by user
 
-The `xbe view memberships list` command does not support a `--user-id` flag for filtering. To filter memberships by user, you need to use JSON output and `jq`.
+To filter memberships by user ID, use the `--user` flag:
 
-## Example
+```bash
+xbe view memberships list --user <user-id>
+```
+
+Alternatively, if the flag approach doesn't work, filter using jq:
 
 ```bash
 xbe view memberships list --json | jq '.[] | select(.user_id == "<user-id>")'
 ```
 
-This will return only memberships where the `user_id` field matches the specified ID.
+This is useful when you want to see all organizations a specific user belongs to, rather than all memberships across the system.
 
-## Getting the current user's memberships
+## Example output
 
-First, get the current user's ID:
-
-```bash
-xbe auth whoami
 ```
-
-Then filter memberships using that ID:
-
-```bash
-xbe view memberships list --json | jq '.[] | select(.user_id == "<user-id>")'
+ID  USER          TYPE    NAME              KIND
+1   Sean Devine   Broker  XBE Demo          operations
+2   Sean Devine   Broker  XBE Office        operations
+4   Sean Devine   Broker  Quantix           manager
 ```
-
-## Understanding empty results
-
-If the filtered output is empty, the user has no memberships. This is normal for admin accounts, which have system-wide access without needing specific organizational memberships.
