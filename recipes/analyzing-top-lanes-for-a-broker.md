@@ -5,30 +5,55 @@ when: When you need to identify the highest volume lanes (origin-destination pai
 
 # Analyzing top lanes for a broker
 
-To find the top lanes for a broker by tonnage:
+## Overview
+Identify the highest volume lanes (origin-destination pairs) for a specific broker to understand their most important routes.
 
-1. First, find the broker's ID:
+## Complete workflow
+
+### Step 1: Find the broker ID
 ```bash
 xbe view brokers list --company-name "<broker-name>"
 ```
 
-2. Then create a lane summary grouped by origin and destination:
-```bash
-xbe summarize lane-summary create \
-  --filter broker=<broker-id> \
-  --filter date_min=<start-date> \
-  --filter date_max=<end-date> \
-  --group-by origin,destination \
-  --sort tons_sum:desc \
-  --limit <number-of-lanes>
+This returns:
+```
+ID  COMPANY
+<broker-id>   <broker-name>
 ```
 
-## Key points:
-- Group by `origin,destination` to get distinct lanes
-- Sort by `tons_sum:desc` to show highest volume lanes first
-- Use `--limit` to control how many top lanes to return
-- The result shows tonnage, cycle counts, and timing metrics for each lane
+### Step 2: Get top lanes with tonnage and transaction counts
+```bash
+xbe summarize lane-summary create \
+  --group-by origin,destination \
+  --filter broker=<broker-id> \
+  --filter year=<year> \
+  --metrics cycle_count,tons_sum \
+  --limit <number>
+```
 
-## Related recipes:
-- For breaking down lanes by trucker: see "Analyzing lanes by trucker"
-- For trucker-specific volume analysis: see "Analyzing highest volume lanes by trucker"
+## Customizing metrics
+The `--metrics` flag allows you to choose which columns to include:
+- `cycle_count` - number of transactions/cycles
+- `tons_sum` - total tonnage
+- `material_transaction_count` - number of material transactions
+- `cycle_minutes_median` - median cycle time
+- And many more (see `xbe summarize lane-summary create --help`)
+
+## Example output
+```
+origin_name                   destination_name              cycle_count  tons_sum
+<origin-1>                    <destination-1>               5837         169401.17
+<origin-2>                    <destination-2>               4062         191905.17
+<origin-3>                    <destination-3>               3756         148807.16
+```
+
+## Filtering by date
+You can filter by:
+- `--filter year=<year>` - entire year
+- `--filter date_min=<date>` and `--filter date_max=<date>` - specific date range
+- `--filter transaction_at_min=<timestamp>` and `--filter transaction_at_max=<timestamp>` - precise timestamps
+
+## Related
+- See "Finding broker ID by company name" for just the ID lookup step
+- See "Analyzing lanes by trucker" for breaking down by trucker instead of just origin/destination
+- See "Analyzing highest volume lanes by trucker" for top lanes grouped by trucker
