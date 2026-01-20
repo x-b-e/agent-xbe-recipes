@@ -20,11 +20,24 @@ jobs:
       - name: Get changed files
         id: changed
         run: |
-          FILES=$(gh pr diff ${{ github.event.pull_request.number }} --name-only | grep '^recipes/.*\.md$' || true)
-          echo "files=$FILES" >> $GITHUB_OUTPUT
-          echo "Changed recipe files: $FILES"
+          ALL_FILES=$(gh pr diff ${{ github.event.pull_request.number }} --name-only)
+          RECIPE_FILES=$(echo "$ALL_FILES" | grep '^recipes/.*\.md$' || true)
+          NON_RECIPE_FILES=$(echo "$ALL_FILES" | grep -v '^recipes/.*\.md$' || true)
+          echo "files=$RECIPE_FILES" >> $GITHUB_OUTPUT
+          echo "non_recipe_files=$NON_RECIPE_FILES" >> $GITHUB_OUTPUT
+          echo "Changed recipe files: $RECIPE_FILES"
+          echo "Non-recipe files: $NON_RECIPE_FILES"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Reject non-recipe changes
+        if: steps.changed.outputs.non_recipe_files != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr close ${{ github.event.pull_request.number }} \
+            --comment "❌ This PR contains changes outside the recipes/ folder. Only recipe file changes (recipes/*.md) can be auto-merged. Files detected: ${{ steps.changed.outputs.non_recipe_files }}"
+          exit 0
 
       - name: Evaluate recipe
         id: evaluate
