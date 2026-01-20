@@ -98,14 +98,15 @@ jobs:
                 messages: [{role: "user", content: $prompt}]
               }')")
 
-          # Extract the text response
-          RESULT=$(echo "$RESPONSE" | jq -r '.content[0].text')
+          # Extract the text response and strip markdown code fences
+          RESULT=$(echo "$RESPONSE" | jq -r '.content[0].text' | sed 's/^```json//; s/^```//; s/```$//')
           echo "Evaluation result: $RESULT"
 
           # Parse JSON from response
-          APPROVED=$(echo "$RESULT" | jq -r '.approved')
-          SUMMARY=$(echo "$RESULT" | jq -r '.summary')
-          REASONS=$(echo "$RESULT" | jq -r '.reasons | join(", ")')
+          JSON_RESULT=$(echo "$RESULT" | grep -v '^$' | tr -d '\n')
+          APPROVED=$(echo "$JSON_RESULT" | jq -r '.approved')
+          SUMMARY=$(echo "$JSON_RESULT" | jq -r '.summary')
+          REASONS=$(echo "$JSON_RESULT" | jq -r '.reasons | join(", ")')
 
           echo "approved=$APPROVED" >> $GITHUB_OUTPUT
           echo "summary=$SUMMARY" >> $GITHUB_OUTPUT
