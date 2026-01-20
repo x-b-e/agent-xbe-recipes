@@ -5,44 +5,48 @@ when: When you need to identify top lanes broken down by trucker to see which tr
 
 # Analyzing highest volume lanes by trucker
 
-## Purpose
-Identify the highest volume lanes (origin-destination pairs) broken down by trucker to understand which truckers are handling the most tonnage on which routes.
+## Problem
+You need to analyze lanes by both trucker and origin/destination to see which truckers handle the highest volumes on which specific routes.
 
-## Command Pattern
+## Solution
+Use `xbe summarize lane-summary create` with `--group-by trucker,origin,destination` to get lane data broken down by trucker, then sort by tonnage.
 
+### Find the broker ID first
 ```bash
-xbe summarize lane-summary create \
-  --group-by origin,destination,trucker \
-  --filter broker=<broker-id> \
-  --filter date_min=<start-date> \
-  --filter date_max=<end-date> \
-  --sort tons_sum:desc
+xbe view broker list --name "<broker-name>"
 ```
 
-## Key Parameters
+### Generate lane summary by trucker
+```bash
+xbe summarize lane-summary create \
+  --group-by trucker,origin,destination \
+  --filter broker=<broker-id> \
+  --filter transaction_at_min=<start-date> \
+  --filter transaction_at_max=<end-date> \
+  --sort tons_sum:desc \
+  --limit <number> \
+  --json
+```
 
-- `--group-by origin,destination,trucker`: Groups results by origin site, destination site, and trucker to show each unique lane-trucker combination
-- `--sort tons_sum:desc`: Sorts by total tons in descending order to show highest volume lanes first
-- Date filters: Use `date_min` and `date_max` for filtering by date range
+### Key flags
+- `--group-by trucker,origin,destination` - Groups by trucker AND lane (origin/destination pair)
+- `--sort tons_sum:desc` - Sorts results by total tonnage in descending order
+- `--limit <number>` - Limits results to top N lanes (optional but useful for high-volume data)
+- `--json` - Returns structured JSON output for further processing or visualization
 
-## Understanding the Output
+### Example output structure
+The JSON response includes:
+- `headers`: Column names (e.g., trucker_name, origin_name, destination_name, cycle_count, tons_sum)
+- `values`: Array of row data as arrays
+- `rows`: Array of row data as objects (easier to work with)
 
-The output shows:
-- `origin_name`: The pickup/origin site
-- `destination_name`: The delivery/destination site  
-- `trucker_name`: The trucking company handling the lane
-- `cycle_count`: Number of completed cycles
-- `material_transaction_count`: Number of individual transactions
-- `tons_sum`: Total tons hauled (the key metric for volume)
+### Date range tips
+- For "past year": Use transaction_at_min/max with dates approximately 1 year apart
+- Transaction dates are in ISO 8601 format (YYYY-MM-DDTHH:MM:SSZ)
+- The API accepts various date formats but ISO 8601 is most reliable
 
-## Analysis Tips
-
-1. **Identify top performing truckers**: Look for truckers appearing frequently in the top results
-2. **Spot lane concentration**: See which origin-destination pairs have the highest volumes
-3. **Compare trucker performance**: Multiple truckers on the same lane can be compared side-by-side
-4. **Understand fleet utilization**: See which truckers dominate which geographic routes
-
-## Related Recipes
-
-- For focusing on a specific trucker's lanes, see "Analyzing lanes by trucker"
-- For getting broker totals without breakdowns, see "Getting aggregate totals without grouping"
+## Notes
+- Default metrics include: cycle_count, material_transaction_count, cycle_minutes_median, calculated_travel_minutes_median, tons_sum
+- Use `--metrics` flag to customize which metrics are returned
+- The `--sort` flag defaults to `material_transaction_count:desc` if not specified
+- Results can be piped to jq for additional processing or used to create visualizations
