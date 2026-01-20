@@ -20,9 +20,9 @@ jobs:
       - name: Get changed files
         id: changed
         run: |
-          FILES=$(gh pr diff ${{ github.event.pull_request.number }} --name-only | grep '\.md$' || true)
+          FILES=$(gh pr diff ${{ github.event.pull_request.number }} --name-only | grep '^recipes/.*\.md$' || true)
           echo "files=$FILES" >> $GITHUB_OUTPUT
-          echo "Changed markdown files: $FILES"
+          echo "Changed recipe files: $FILES"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -41,7 +41,7 @@ jobs:
           RECIPE_CONTENT=$(cat "$RECIPE_FILE")
 
           # Get existing recipes for duplicate check
-          EXISTING_RECIPES=$(for f in *.md; do
+          EXISTING_RECIPES=$(for f in recipes/*.md; do
             if [ "$f" != "$RECIPE_FILE" ] && [ -f "$f" ]; then
               echo "=== $f ==="
               head -20 "$f"
