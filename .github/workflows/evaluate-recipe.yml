@@ -64,11 +64,13 @@ jobs:
           Evaluate this recipe on the following criteria:
 
           1. STRUCTURE: Does it have valid YAML frontmatter with "title" and "when" fields?
-          2. CONFIDENTIALITY: Does it contain ANY confidential information?
-             - Customer names, IDs, or data
-             - Company-specific business details
-             - API keys, credentials, or secrets
-             - Specific dollar amounts, dates, or identifiable information
+          2. CONFIDENTIALITY: All examples must use OBVIOUSLY FAKE/PLACEHOLDER data:
+             - Must use placeholder syntax like <customer-id>, <broker-id>, <supplier-name>
+             - No real IDs (e.g., reject --customer-id 89, accept --customer-id <id>)
+             - No real customer/company names - use placeholders like <customer-name> or obviously fake names like "Acme Corp"
+             - No real dollar amounts, dates, or identifiable information - use placeholders like <amount> or obviously fake values like $123.45
+             - No API keys, credentials, or secrets
+             - You should be able to IMMEDIATELY tell all data is fake - if you have any doubt, reject it
           3. USEFULNESS: Is this generalizable knowledge that would help future sessions?
           4. DUPLICATE: Is this substantially similar to an existing recipe?
 
