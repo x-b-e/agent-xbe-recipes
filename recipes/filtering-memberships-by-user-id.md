@@ -1,42 +1,42 @@
 ---
 title: Filtering memberships by user
-when: When you need to see memberships for a specific user, or when a user asks for 'my memberships' and you need to identify who they are first
+when: When you need to see memberships for a specific user
 ---
 
 # Filtering memberships by user
 
-## Overview
-Use the `--user` flag with `xbe view memberships list` to filter memberships for a specific user.
+## Problem
+You need to view only the memberships for a specific user rather than all memberships in the system.
 
-## Finding the current user's ID
-When a user asks for "my memberships" or "my personal memberships", first identify who they are:
-
-```bash
-xbe auth whoami
-```
-
-This returns the current authenticated user's information including their ID:
-```
-Logged in as <user-name>
-  ID:    <user-id>
-  Email: <email>
-  Mobile: <phone>
-  Admin: <yes|no>
-```
-
-## Filtering by user ID
-Once you have the user ID, filter memberships:
+## Solution
+Use the `--user` flag with the memberships list command:
 
 ```bash
 xbe view memberships list --user <user-id>
 ```
 
 ## Example workflow
-1. Get current user info: `xbe auth whoami`
-2. Extract the user ID from output
-3. Filter memberships: `xbe view memberships list --user <user-id>`
 
-## Notes
-- Without the `--user` flag, `xbe view memberships list` returns all memberships in the system
-- The `--user` flag filters to show only memberships for the specified user
-- Each membership shows the organization type (Broker, Trucker, etc.) and the user's role (manager, operations, etc.)
+1. First, identify the user ID (if needed):
+```bash
+xbe auth whoami
+```
+
+This shows your current user ID and details.
+
+2. Then filter memberships by that user:
+```bash
+xbe view memberships list --user <user-id>
+```
+
+## Output
+The command returns a table showing:
+- Membership ID
+- User name
+- Organization type (Broker, Trucker, etc.)
+- Organization name
+- Role kind (manager, operations, etc.)
+
+## Related recipes
+- listing-user-memberships.md - General membership listing
+- creating-memberships.md - Creating new memberships
