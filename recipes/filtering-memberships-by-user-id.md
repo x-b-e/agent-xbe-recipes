@@ -6,37 +6,39 @@ when: When you need to see memberships for a specific user, or when a user asks 
 # Filtering memberships by user
 
 ## Overview
-Use the `--user` flag with `xbe view memberships list` to filter memberships for a specific user.
+When a user asks for "my memberships" or you need to see memberships for a specific user, you need to filter by user ID.
 
-## Finding the current user's ID
-When a user asks for "my memberships" or "my personal memberships", first identify who they are:
+## Getting the current user's memberships
 
+### Step 1: Identify the current user
 ```bash
 xbe auth whoami
 ```
 
-This returns the current authenticated user's information including their ID:
+This returns:
 ```
 Logged in as <user-name>
   ID:    <user-id>
   Email: <email>
   Mobile: <phone>
-  Admin: <yes|no>
+  Admin: yes/no
 ```
 
-## Filtering by user ID
-Once you have the user ID, filter memberships:
-
+### Step 2: List memberships for that user
 ```bash
 xbe view memberships list --user <user-id>
 ```
 
-## Example workflow
-1. Get current user info: `xbe auth whoami`
-2. Extract the user ID from output
-3. Filter memberships: `xbe view memberships list --user <user-id>`
+## Output format
+The filtered results show only memberships for the specified user:
+```
+                     ORGANIZATION                  
+ID      USER         TYPE          NAME            KIND
+<id>    <user-name>  Broker        <org-name>      operations
+<id>    <user-name>  Broker        <org-name>      manager
+```
 
-## Notes
-- Without the `--user` flag, `xbe view memberships list` returns all memberships in the system
-- The `--user` flag filters to show only memberships for the specified user
-- Each membership shows the organization type (Broker, Trucker, etc.) and the user's role (manager, operations, etc.)
+## Related
+- See "Listing user memberships" for the basic list command without filtering
+- See "Deleting memberships" for removing memberships
+- See "Creating memberships" for adding new memberships
