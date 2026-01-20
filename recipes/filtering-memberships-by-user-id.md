@@ -1,29 +1,42 @@
 ---
 title: Filtering memberships by user
-when: When you need to see memberships for a specific user
+when: When you need to see memberships for a specific user, or when a user asks for 'my memberships' and you need to identify who they are first
 ---
 
 # Filtering memberships by user
 
-To filter memberships by user ID, use the `--user` flag:
+## Overview
+Use the `--user` flag with `xbe view memberships list` to filter memberships for a specific user.
+
+## Finding the current user's ID
+When a user asks for "my memberships" or "my personal memberships", first identify who they are:
+
+```bash
+xbe auth whoami
+```
+
+This returns the current authenticated user's information including their ID:
+```
+Logged in as <user-name>
+  ID:    <user-id>
+  Email: <email>
+  Mobile: <phone>
+  Admin: <yes|no>
+```
+
+## Filtering by user ID
+Once you have the user ID, filter memberships:
 
 ```bash
 xbe view memberships list --user <user-id>
 ```
 
-Alternatively, if the flag approach doesn't work, filter using jq:
+## Example workflow
+1. Get current user info: `xbe auth whoami`
+2. Extract the user ID from output
+3. Filter memberships: `xbe view memberships list --user <user-id>`
 
-```bash
-xbe view memberships list --json | jq '.[] | select(.user_id == "<user-id>")'
-```
-
-This is useful when you want to see all organizations a specific user belongs to, rather than all memberships across the system.
-
-## Example output
-
-```
-ID  USER          TYPE    NAME              KIND
-1   Sean Devine   Broker  XBE Demo          operations
-2   Sean Devine   Broker  XBE Office        operations
-4   Sean Devine   Broker  Quantix           manager
-```
+## Notes
+- Without the `--user` flag, `xbe view memberships list` returns all memberships in the system
+- The `--user` flag filters to show only memberships for the specified user
+- Each membership shows the organization type (Broker, Trucker, etc.) and the user's role (manager, operations, etc.)
