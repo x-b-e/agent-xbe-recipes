@@ -79,13 +79,12 @@ jobs:
 
           1. STRUCTURE: Does it have valid YAML frontmatter with "title" and "when" fields?
           2. TITLE: Is the title concise? Reject titles that include "with XBE CLI", "using XBE", or similar redundant phrases.
-          3. CONFIDENTIALITY: All examples must use OBVIOUSLY FAKE/PLACEHOLDER data:
-             - Must use placeholder syntax like <customer-id>, <broker-id>, <supplier-name>
-             - No real IDs (e.g., reject --customer-id 89, accept --customer-id <id>)
-             - No real customer/company names - use placeholders like <customer-name> or obviously fake names like "Acme Corp"
-             - No real dollar amounts, dates, or identifiable information - use placeholders like <amount> or obviously fake values like $123.45
-             - No API keys, credentials, or secrets
-             - You should be able to IMMEDIATELY tell all data is fake - if you have any doubt, reject it
+          3. PLACEHOLDERS: All examples must use placeholder syntax, not real or fake values:
+             - IDs: <customer-id>, <broker-id>, <trucker-id>, etc.
+             - Names: <customer-name>, <supplier-name>, etc.
+             - Dates: <date>, <start-date>, <end-date>, etc.
+             - Amounts: <amount>, <tons>, etc.
+             - Reject any actual values, even if they seem fake (e.g., reject 123, reject 2025-01-01)
           4. USEFULNESS: Is this generalizable knowledge that would help future sessions?
           5. DUPLICATE: Is this substantially similar to an existing recipe?
 
