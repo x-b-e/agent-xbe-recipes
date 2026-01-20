@@ -1,0 +1,129 @@
+name: Evaluate Recipe PR
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get changed files
+        id: changed
+        run: |
+          FILES=$(gh pr diff ${{ github.event.pull_request.number }} --name-only | grep '\.md$' || true)
+          echo "files=$FILES" >> $GITHUB_OUTPUT
+          echo "Changed markdown files: $FILES"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Evaluate recipe
+        id: evaluate
+        if: steps.changed.outputs.files != ''
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Get the recipe content
+          RECIPE_FILE="${{ steps.changed.outputs.files }}"
+
+          # Fetch the file content from the PR branch
+          gh pr checkout ${{ github.event.pull_request.number }}
+          RECIPE_CONTENT=$(cat "$RECIPE_FILE")
+
+          # Get existing recipes for duplicate check
+          EXISTING_RECIPES=$(for f in *.md; do
+            if [ "$f" != "$RECIPE_FILE" ] && [ -f "$f" ]; then
+              echo "=== $f ==="
+              head -20 "$f"
+              echo ""
+            fi
+          done)
+
+          # Build the evaluation prompt
+          PROMPT=$(cat <<'PROMPT_END'
+          You are evaluating a recipe PR for a shared knowledge base. Recipes help AI agents learn patterns for working with the XBE platform.
+
+          <recipe>
+          RECIPE_PLACEHOLDER
+          </recipe>
+
+          <existing_recipes>
+          EXISTING_PLACEHOLDER
+          </existing_recipes>
+
+          Evaluate this recipe on the following criteria:
+
+          1. STRUCTURE: Does it have valid YAML frontmatter with "title" and "when" fields?
+          2. CONFIDENTIALITY: Does it contain ANY confidential information?
+             - Customer names, IDs, or data
+             - Company-specific business details
+             - API keys, credentials, or secrets
+             - Specific dollar amounts, dates, or identifiable information
+          3. USEFULNESS: Is this generalizable knowledge that would help future sessions?
+          4. DUPLICATE: Is this substantially similar to an existing recipe?
+
+          Respond with JSON only:
+          {
+            "approved": boolean,
+            "reasons": ["list of concerns if not approved"],
+            "summary": "one sentence summary of the recipe"
+          }
+          PROMPT_END
+          )
+
+          # Replace placeholders
+          PROMPT="${PROMPT/RECIPE_PLACEHOLDER/$RECIPE_CONTENT}"
+          PROMPT="${PROMPT/EXISTING_PLACEHOLDER/$EXISTING_RECIPES}"
+
+          # Call Claude API
+          RESPONSE=$(curl -s https://api.anthropic.com/v1/messages \
+            -H "Content-Type: application/json" \
+            -H "x-api-key: $ANTHROPIC_API_KEY" \
+            -H "anthropic-version: 2023-06-01" \
+            -d "$(jq -n \
+              --arg prompt "$PROMPT" \
+              '{
+                model: "claude-sonnet-4-5-20250929",
+                max_tokens: 1024,
+                messages: [{role: "user", content: $prompt}]
+              }')")
+
+          # Extract the text response
+          RESULT=$(echo "$RESPONSE" | jq -r '.content[0].text')
+          echo "Evaluation result: $RESULT"
+
+          # Parse JSON from response
+          APPROVED=$(echo "$RESULT" | jq -r '.approved')
+          SUMMARY=$(echo "$RESULT" | jq -r '.summary')
+          REASONS=$(echo "$RESULT" | jq -r '.reasons | join(", ")')
+
+          echo "approved=$APPROVED" >> $GITHUB_OUTPUT
+          echo "summary=$SUMMARY" >> $GITHUB_OUTPUT
+          echo "reasons=$REASONS" >> $GITHUB_OUTPUT
+
+      - name: Approve and merge
+        if: steps.evaluate.outputs.approved == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr review ${{ github.event.pull_request.number }} --approve \
+            --body "Recipe approved: ${{ steps.evaluate.outputs.summary }}"
+          gh pr merge ${{ github.event.pull_request.number }} --squash --auto
+
+      - name: Close with feedback
+        if: steps.evaluate.outputs.approved == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr close ${{ github.event.pull_request.number }} \
+            --comment "Recipe not approved. Concerns: ${{ steps.evaluate.outputs.reasons }}"
