@@ -5,37 +5,56 @@ when: When you need to calculate the percentage of managed vs unmanaged transpor
 
 # Calculating managed transport order percentages
 
-## Basic percentage calculation
+## Simple percentage calculation
 
-To get the current percentage of managed orders for a broker:
+To get the overall percentage of managed vs unmanaged orders:
 
 ```bash
-# Get today's managed percentage
-xbe view transport-orders list --broker <broker-id> \
-  --start-on <date> --end-on <date> --json | \
-  jq -r '[.rows[] | select(.is_managed == true)] | length as $managed | 
-    (input | length) as $total | 
-    ($managed / $total * 100 | tostring + "%")'
+xbe view transport-orders list \
+  --broker <broker-id> \
+  --start-on <start-date> \
+  --end-on <end-date> \
+  --json | jq -r '
+    group_by(.is_managed) | 
+    map({managed: .[0].is_managed, count: length}) | 
+    "Managed: \(map(select(.managed == true) | .count)[0] // 0), Unmanaged: \(map(select(.managed == false) | .count)[0] // 0)"
+  '
 ```
 
-## Weekly time-series analysis
+## Time-series trend with Python visualization
 
-To analyze managed order trends over time:
+For analyzing trends over time with weekly breakdowns:
+
+### Step 1: Export data grouped by date and managed status
 
 ```bash
-# 1. Export all orders with managed status and pickup dates to JSON
-xbe view transport-orders list --broker <broker-id> \
-  --start-on <start-date> --end-on <end-date> --json > /tmp/managed_by_date.json
+xbe view transport-orders list \
+  --broker <broker-id> \
+  --start-on <start-date> \
+  --end-on <end-date> \
+  --json | jq '{
+    rows: [
+      group_by(.pickup_date, .is_managed) | .[] | {
+        pickup_date: .[0].pickup_date,
+        is_managed: .[0].is_managed,
+        transport_order_count: length
+      }
+    ]
+  }' > /tmp/managed_by_date.json
+```
 
-# 2. Process with Python to group by week and calculate percentages
-cat > /tmp/process_weekly.py << 'EOF'
+### Step 2: Create Python script to calculate weekly percentages with date ranges
+
+```python
 import json
 from datetime import datetime
 from collections import defaultdict
 
+# Read the JSON data
 with open('/tmp/managed_by_date.json', 'r') as f:
     data = json.load(f)
 
+# Process rows to calculate weekly stats and track date ranges
 weekly_data = defaultdict(lambda: {'managed': 0, 'unmanaged': 0, 'dates': []})
 
 for row in data['rows']:
@@ -43,6 +62,7 @@ for row in data['rows']:
     is_managed = row['is_managed']
     count = int(row['transport_order_count'])
     
+    # Parse date and get ISO week
     date_obj = datetime.strptime(pickup_date, '%Y-%m-%d')
     year = date_obj.isocalendar()[0]
     week = date_obj.isocalendar()[1]
@@ -55,7 +75,7 @@ for row in data['rows']:
     else:
         weekly_data[week_key]['unmanaged'] += count
 
-# Calculate percentages and create output
+# Calculate percentages and prepare output
 results = []
 for week_key in sorted(weekly_data.keys()):
     managed = weekly_data[week_key]['managed']
@@ -77,17 +97,16 @@ for week_key in sorted(weekly_data.keys()):
         'pct_managed': pct_managed
     })
 
-# Print ASCII chart (optionally filter to specific weeks)
+# Create ASCII bar chart
 print("\nManaged Transport Order Percentage by Week")
 print("=" * 90)
 print(f"{'Week':<12} {'Date Range':<14} {'Managed %':<10} {'Total':<10} Bar")
 print("-" * 90)
 
 for result in results:
-    # Optional: filter to start from specific week
-    # if result['week'] < '2025-W39':
-    #     continue
-    
+    if result['week'] < '<start-week>':  # Optional: filter to specific start week
+        continue
+        
     week = result['week']
     date_range = result['date_range']
     pct = result['pct_managed']
@@ -107,28 +126,21 @@ all_unmanaged = sum(r['unmanaged'] for r in results)
 all_total = all_managed + all_unmanaged
 overall_pct = (all_managed / all_total * 100) if all_total > 0 else 0
 
-print(f"\nOverall Summary:")
+print(f"\nSummary:")
 print(f"  Total Orders: {all_total:,}")
 print(f"  Managed: {all_managed:,} ({overall_pct:.1f}%)")
 print(f"  Unmanaged: {all_unmanaged:,} ({100-overall_pct:.1f}%)")
-EOF
-
-python3 /tmp/process_weekly.py
 ```
 
-## Key points
-
-- Use `--is-managed true/false` flag to filter by managed status
-- The `is_managed` field in JSON output indicates whether each order is managed
-- Group by ISO week using `date_obj.isocalendar()[0]` (year) and `[1]` (week number)
-- Track date ranges by collecting all dates in each week and using min/max
-- Filter results to specific week ranges by comparing week_key strings (e.g., `>= '2025-W39'`)
-- ASCII bars help visualize trends in the terminal (each █ can represent ~2.5%)
-
-## Finding the broker ID
-
-If you need to find a broker's ID by name first:
+### Step 3: Run the visualization
 
 ```bash
-xbe view brokers list --q "<broker-name>" --json | jq '.rows[] | {id, name}'
+python3 /tmp/process_weekly_managed.py
 ```
+
+## Key techniques
+
+- **ISO week calculation**: Use `date_obj.isocalendar()` to get the ISO year and week number for grouping
+- **Date range tracking**: Collect all dates for each week and use `min()/max()` to find the actual start/end dates
+- **ASCII bars**: Scale the bar length proportionally to the percentage (e.g., `int(pct / 100 * 40)` for max 40 chars)
+- **Date formatting**: Use `strftime('%m/%d')` for compact date display in charts
