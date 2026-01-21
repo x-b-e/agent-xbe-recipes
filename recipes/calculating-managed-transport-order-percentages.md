@@ -1,31 +1,38 @@
 ---
 title: Calculating managed transport order percentages
-when: When you need to calculate the percentage of managed vs unmanaged transport orders for a broker
+when: When you need to find what percentage of transport orders are managed vs unmanaged for a broker
 ---
 
-# Calculating managed transport order percentages
+To calculate the percentage of managed transport orders, use the `transport-order-efficiency-summary` command grouped by `is_managed`. Note that the general `transport-summary` command does NOT support grouping by managed status.
 
-## Problem
-
-The `xbe summarize transport-summary` command provides status breakdowns (active, at_risk, lifecycle states, etc.) but does NOT include a breakdown of managed vs unmanaged orders.
-
-## Solution
-
-Use `xbe view transport-orders list` with JSON output and `jq` to filter and count:
+## Basic Usage
 
 ```bash
-# Get managed order count
-xbe view transport-orders list --broker <broker-id> --start-on <date> --end-on <date> --json --limit 10000 | jq '[.[] | select(.managed == true)] | length'
-
-# Get total order count
-xbe view transport-orders list --broker <broker-id> --start-on <date> --end-on <date> --json --limit 10000 | jq 'length'
-
-# Calculate percentage with a single command
-xbe view transport-orders list --broker <broker-id> --start-on <date> --end-on <date> --json --limit 10000 | jq '(([.[] | select(.managed == true)] | length) / length * 100)'
+xbe summarize transport-order-efficiency-summary create \
+  --group-by is_managed \
+  --filter broker=<broker-id> \
+  --filter ordered_date_min=<start-date> \
+  --filter ordered_date_max=<end-date>
 ```
 
-## Notes
+## Example Output
 
-- The `--is-managed` flag exists for filtering, but doesn't help with counting both categories
-- Use `--limit 10000` to ensure you get all orders (default limit may be lower)
-- The transport-summary command is useful for status breakdowns but not for managed/unmanaged analysis
+```
+is_managed  transport_order_count  ordered_miles_sum  routed_miles_sum  deviated_miles_sum
+false       768                    133768.36          26657.27          126.02
+true        45                     6989.01            13853.63          43.86
+```
+
+## Calculating the Percentage
+
+From the output above:
+- Total orders: 768 + 45 = 813
+- Managed percentage: (45 / 813) × 100 = 5.5%
+- Unmanaged percentage: (768 / 813) × 100 = 94.5%
+
+## Important Notes
+
+- Use `ordered_date` filters to match when orders were created
+- The `transport-summary` command does NOT support filtering or grouping by managed status
+- The `transport-orders list` command has an `--is-managed` filter but doesn't provide aggregate counts
+- Different date filters (ordered_date vs pickup_date vs delivery_date) may yield different counts
