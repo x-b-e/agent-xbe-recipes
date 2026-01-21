@@ -3,24 +3,34 @@ title: Finding broker ID by company name
 when: When you need to find a broker's ID to use in filters or other commands
 ---
 
-Use the `xbe view brokers list` command with the `--company-name` flag to search for brokers by partial name match:
+# Finding broker ID by company name
+
+To find a broker's ID when you know their company name:
 
 ```bash
-xbe view brokers list --company-name "<search-term>"
+xbe view brokers list --q "<company-name>"
 ```
 
-Example:
+The `--q` flag performs a server-side search query across broker attributes.
+
+## Example
+
 ```bash
-xbe view brokers list --company-name "Acme"
+# Search for a broker by name
+xbe view brokers list --q "Quantix"
 ```
 
-Output:
-```
-ID  COMPANY
-123  Acme Corporation
-```
+## For exact ID lookup
 
-The ID can then be used in other commands like lane summaries:
+If you already know the broker ID and want to verify:
+
 ```bash
-xbe summarize lane-summary create --filter broker=<broker-id> ...
+xbe view brokers show <broker-id>
 ```
+
+## Notes
+
+- Use `--q` for fuzzy search, not `--name` 
+- The search is case-insensitive and matches partial strings
+- Returns a list of all matching brokers
+- Add `--json` flag for programmatic parsing
