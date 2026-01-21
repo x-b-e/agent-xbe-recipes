@@ -1,113 +1,128 @@
 ---
 title: Calculating managed transport order percentages
-when: When you need to calculate the percentage of managed vs unmanaged transport orders for a broker, or when you need to calculate driver confirmation percentages for planned transport orders, either as simple totals or as time-series trends with visualizations
+when: When you need to calculate the percentage of managed vs unmanaged transport orders for a broker, or when you need to calculate driver confirmation percentages for planned transport orders, either as simple totals or broken down by office with visualizations
 ---
 
 # Calculating managed transport order percentages
 
-## Simple percentage calculation
+## Problem
+You need to calculate what percentage of transport orders are managed vs unmanaged, or calculate driver confirmation percentages for planned orders.
 
-To calculate what percentage of transport orders are managed vs unmanaged:
+## Solution
 
+### Simple managed order percentage (today)
+
+1. Get total orders and managed orders for today:
 ```bash
-xbe summarize transport-order-efficiency-summary create \
-  --group-by is_managed \
-  --filter broker=<broker-id> \
-  --filter pickup_date_min=<start-date> \
-  --filter pickup_date_max=<end-date>
+xbe view transport-orders list --broker <broker-id> --start-on <today-date> --end-on <today-date> --json | jq '{total: length, managed: [.[] | select(.is_managed == true)] | length} | .managed / .total * 100'
 ```
 
-This returns counts grouped by `is_managed` (true/false). Calculate the percentage by dividing managed count by total count.
+### Driver confirmation percentage (simple)
 
-## Driver confirmation percentage
-
-To calculate what percentage of planned drivers have confirmed:
-
+1. Query transport plan driver data:
 ```bash
-xbe summarize transport-order-efficiency-summary create \
-  --group-by "" \
-  --filter broker=<broker-id> \
-  --filter pickup_date_min=<start-date> \
-  --filter pickup_date_max=<end-date> \
-  --metrics transport_order_count,project_transport_plan_driver_count,project_transport_plan_driver_confirmation_count
-```
-
-Calculate the percentage as: `(project_transport_plan_driver_confirmation_count / project_transport_plan_driver_count) * 100`
-
-## Weekly trend analysis with visualization
-
-To see how managed percentages have trended over time:
-
-1. Export data grouped by date and managed status:
-
-```bash
-xbe summarize transport-order-efficiency-summary create \
-  --group-by pickup_date,is_managed \
-  --filter broker=<broker-id> \
-  --filter pickup_date_min=<start-date> \
-  --filter pickup_date_max=<end-date> \
-  --json > /tmp/managed_data.json
-```
-
-2. Process with Python to calculate weekly percentages:
-
-```python
-import json
-from datetime import datetime
-from collections import defaultdict
-
-with open('/tmp/managed_data.json', 'r') as f:
-    data = json.load(f)
-
-weekly_data = defaultdict(lambda: {'managed': 0, 'unmanaged': 0, 'dates': []})
-
-for row in data['rows']:
-    pickup_date = row['pickup_date']
-    is_managed = row['is_managed']
-    count = int(row['transport_order_count'])
-    
-    # Get ISO week
-    date_obj = datetime.strptime(pickup_date, '%Y-%m-%d')
-    year = date_obj.isocalendar()[0]
-    week = date_obj.isocalendar()[1]
-    week_key = f"{year}-W{week:02d}"
-    
-    weekly_data[week_key]['dates'].append(date_obj)
-    
-    if is_managed:
-        weekly_data[week_key]['managed'] += count
-    else:
-        weekly_data[week_key]['unmanaged'] += count
-
-# Print results with ASCII bar chart
-print(f"{'Week':<12} {'Date Range':<14} {'Managed %':<10} {'Total':<10} Bar")
-for week_key in sorted(weekly_data.keys()):
-    managed = weekly_data[week_key]['managed']
-    unmanaged = weekly_data[week_key]['unmanaged']
-    total = managed + unmanaged
-    pct_managed = (managed / total * 100) if total > 0 else 0
-    
-    dates = weekly_data[week_key]['dates']
-    start_date = min(dates).strftime('%m/%d')
-    end_date = max(dates).strftime('%m/%d')
-    
-    bar_length = int(pct_managed / 100 * 40)
-    bar = '█' * bar_length
-    
-    print(f"{week_key:<12} {start_date}-{end_date:<12} {pct_managed:>6.1f}%    {total:>6,}     {bar}")
-```
-
-## Breaking down by office or other dimensions
-
-Add additional dimensions to the `--group-by` to see managed percentages by office, customer, etc:
-
-```bash
-xbe summarize transport-order-efficiency-summary create \
-  --group-by project_office,is_managed \
-  --filter broker=<broker-id> \
-  --filter pickup_date_min=<start-date> \
-  --filter pickup_date_max=<end-date> \
+xbe query transport-plan-drivers \
+  --broker <broker-id> \
+  --start-on <start-date> \
+  --end-on <end-date> \
+  --select project_transport_plan_driver_count,project_transport_plan_driver_confirmation_count \
   --json
 ```
 
-Then calculate percentages for each office separately in your processing script.
+2. Calculate the percentage:
+```bash
+xbe query transport-plan-drivers ... --json | jq '
+  .[] | 
+  (.project_transport_plan_driver_confirmation_count / .project_transport_plan_driver_count * 100)
+'
+```
+
+### Driver confirmation percentage by office (with visualization)
+
+1. Query with office grouping:
+```bash
+xbe query transport-plan-drivers \
+  --broker <broker-id> \
+  --start-on <start-date> \
+  --end-on <end-date> \
+  --select project_transport_plan_driver_count,project_transport_plan_driver_confirmation_count \
+  --group-by project_office_name \
+  --json
+```
+
+This also works for comparing against transport orders:
+```bash
+xbe query transport-plan-drivers \
+  --broker <broker-id> \
+  --start-on <start-date> \
+  --end-on <end-date> \
+  --select transport_order_count,project_transport_plan_driver_count,project_transport_plan_driver_confirmation_count \
+  --group-by project_office_name
+```
+
+2. Process and visualize with Python:
+```python
+import sys
+import json
+
+# Read JSON from stdin or variable
+data = json.loads(sys.stdin.read())
+
+results = []
+for row in data:
+    office = row['project_office_name']
+    drivers = float(row['project_transport_plan_driver_count'])
+    confirmations = float(row['project_transport_plan_driver_confirmation_count'])
+    
+    pct = (confirmations / drivers * 100) if drivers > 0 else 0
+    
+    results.append({
+        'office': office,
+        'drivers': int(drivers),
+        'confirmations': int(confirmations),
+        'pct': pct
+    })
+
+# Sort by confirmation percentage descending
+results.sort(key=lambda x: x['pct'], reverse=True)
+
+print(f"{'Office':<20} {'Drivers':<10} {'Confirmed':<12} {'Confirm %':<12}")
+print("-" * 60)
+
+for r in results:
+    # Create mini bar chart
+    bar_length = int(r['pct'] / 10)
+    bar = '█' * bar_length if bar_length > 0 else ''
+    
+    print(f"{r['office']:<20} {r['drivers']:<10} {r['confirmations']:<12} {r['pct']:>5.1f}%  {bar}")
+
+# Print totals
+total_drivers = sum(r['drivers'] for r in results)
+total_confirmations = sum(r['confirmations'] for r in results)
+total_pct = (total_confirmations / total_drivers * 100) if total_drivers > 0 else 0
+print("=" * 60)
+print(f"{'TOTAL':<20} {total_drivers:<10} {total_confirmations:<12} {total_pct:>5.1f}%")
+```
+
+### Time-series trend analysis
+
+1. Query with date grouping:
+```bash
+xbe query transport-plan-drivers \
+  --broker <broker-id> \
+  --start-on <start-date> \
+  --end-on <end-date> \
+  --select project_transport_plan_driver_count,project_transport_plan_driver_confirmation_count \
+  --group-by date \
+  --json
+```
+
+2. Process for trend visualization (can combine with gnuplot or similar).
+
+## Key points
+
+- Use `--group-by project_office_name` to break down confirmation rates by office
+- Use `--group-by date` for time-series analysis
+- Sort results by percentage to identify best and worst performing offices
+- Visual bar charts help quickly identify patterns
+- Always handle division by zero when calculating percentages
