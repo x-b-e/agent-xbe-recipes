@@ -3,36 +3,62 @@ title: Calculating managed transport order percentages
 when: When you need to find what percentage of transport orders are managed vs unmanaged for a broker
 ---
 
-To calculate the percentage of managed transport orders, use the `transport-order-efficiency-summary` command grouped by `is_managed`. Note that the general `transport-summary` command does NOT support grouping by managed status.
+# Calculating managed transport order percentages
 
-## Basic Usage
+## Overview
+Use `transport-order-efficiency-summary` grouped by `is_managed` to calculate what percentage of orders are managed vs unmanaged.
 
+## Key Learning: Date Filter Selection
+The efficiency summary supports two different date filters that return different results:
+- `ordered_date` - filters by when the order was created
+- `pickup_date` - filters by when the pickup is scheduled
+
+For "today's orders" questions, **use `pickup_date`** as this represents the operational view of what's happening today.
+
+## Basic Pattern
 ```bash
 xbe summarize transport-order-efficiency-summary create \
   --group-by is_managed \
   --filter broker=<broker-id> \
-  --filter ordered_date_min=<start-date> \
-  --filter ordered_date_max=<end-date>
+  --filter pickup_date_min=<start-date> \
+  --filter pickup_date_max=<end-date>
 ```
 
-## Example Output
+## Example: Today's managed percentage
+```bash
+# Get managed vs unmanaged breakdown for today's pickups
+xbe summarize transport-order-efficiency-summary create \
+  --group-by is_managed \
+  --filter broker=<broker-id> \
+  --filter pickup_date_min=<date> \
+  --filter pickup_date_max=<date>
+```
 
+Output shows:
 ```
 is_managed  transport_order_count  ordered_miles_sum  routed_miles_sum  deviated_miles_sum
-false       768                    133768.36          26657.27          126.02
-true        45                     6989.01            13853.63          43.86
+true        398                    86268.39           168131.43         30581.18
+false       367                    74872.54           120332.01         30607.07
 ```
 
-## Calculating the Percentage
+Calculate percentage: 398 / (398 + 367) = 52% managed
 
-From the output above:
-- Total orders: 768 + 45 = 813
-- Managed percentage: (45 / 813) × 100 = 5.5%
-- Unmanaged percentage: (768 / 813) × 100 = 94.5%
+## Alternative: Using ordered_date
+If you need to see orders by when they were created (not when pickups are scheduled):
+```bash
+xbe summarize transport-order-efficiency-summary create \
+  --group-by is_managed \
+  --filter broker=<broker-id> \
+  --filter ordered_date=<date>
+```
 
-## Important Notes
+This typically returns much fewer orders since it only includes orders created on that specific date.
 
-- Use `ordered_date` filters to match when orders were created
-- The `transport-summary` command does NOT support filtering or grouping by managed status
-- The `transport-orders list` command has an `--is-managed` filter but doesn't provide aggregate counts
-- Different date filters (ordered_date vs pickup_date vs delivery_date) may yield different counts
+## Available Date Filters
+- `ordered_date` - specific date
+- `ordered_date_min` / `ordered_date_max` - date range
+- `pickup_date` - specific date  
+- `pickup_date_min` / `pickup_date_max` - date range
+
+## Related Commands
+For status breakdowns without managed/unmanaged split, see `transport-summary`.
