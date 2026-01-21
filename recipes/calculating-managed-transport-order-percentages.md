@@ -5,56 +5,49 @@ when: When you need to calculate the percentage of managed vs unmanaged transpor
 
 # Calculating managed transport order percentages
 
-## Simple percentage calculation
+## Basic percentage for today
 
-To get the overall percentage of managed vs unmanaged orders:
+To get today's managed transport order percentage:
 
 ```bash
-xbe view transport-orders list \
-  --broker <broker-id> \
-  --start-on <start-date> \
-  --end-on <end-date> \
+xbe summarize transport-order-efficiency-summary create \
+  --group-by is_managed \
+  --filter broker=<broker-id> \
+  --filter pickup_date_min=<today-date> \
+  --filter pickup_date_max=<today-date> \
   --json | jq -r '
+    .rows | 
     group_by(.is_managed) | 
-    map({managed: .[0].is_managed, count: length}) | 
-    "Managed: \(map(select(.managed == true) | .count)[0] // 0), Unmanaged: \(map(select(.managed == false) | .count)[0] // 0)"
+    map({is_managed: .[0].is_managed, count: (map(.transport_order_count | tonumber) | add)}) | 
+    (map(select(.is_managed == true)) | .[0].count // 0) as $managed |
+    (map(.count) | add) as $total |
+    "Managed: \($managed)/\($total) (\(($managed / $total * 100 * 10 | round) / 10)%)"
   '
 ```
 
-## Time-series trend with Python visualization
+## Time-series analysis with weekly grouping
 
-For analyzing trends over time with weekly breakdowns:
-
-### Step 1: Export data grouped by date and managed status
+For trend analysis over time, group by date and managed status, then post-process to calculate weekly percentages:
 
 ```bash
-xbe view transport-orders list \
-  --broker <broker-id> \
-  --start-on <start-date> \
-  --end-on <end-date> \
-  --json | jq '{
-    rows: [
-      group_by(.pickup_date, .is_managed) | .[] | {
-        pickup_date: .[0].pickup_date,
-        is_managed: .[0].is_managed,
-        transport_order_count: length
-      }
-    ]
-  }' > /tmp/managed_by_date.json
+# Step 1: Get raw data grouped by date and managed status
+xbe summarize transport-order-efficiency-summary create \
+  --group-by pickup_date,is_managed \
+  --filter broker=<broker-id> \
+  --filter pickup_date_min=<start-date> \
+  --filter pickup_date_max=<end-date> \
+  --json > /tmp/managed_by_date.json
 ```
 
-### Step 2: Create Python script to calculate weekly percentages with date ranges
-
 ```python
+# Step 2: Process into weekly percentages with visualization
 import json
 from datetime import datetime
 from collections import defaultdict
 
-# Read the JSON data
 with open('/tmp/managed_by_date.json', 'r') as f:
     data = json.load(f)
 
-# Process rows to calculate weekly stats and track date ranges
 weekly_data = defaultdict(lambda: {'managed': 0, 'unmanaged': 0, 'dates': []})
 
 for row in data['rows']:
@@ -75,72 +68,56 @@ for row in data['rows']:
     else:
         weekly_data[week_key]['unmanaged'] += count
 
-# Calculate percentages and prepare output
-results = []
+# Calculate percentages and create visualization
+print("\nManaged Transport Order Percentage by Week")
+print("=" * 90)
+print(f"{'Week':<12} {'Date Range':<14} {'Managed %':<10} {'Total':<10} Bar")
+print("-" * 90)
+
 for week_key in sorted(weekly_data.keys()):
     managed = weekly_data[week_key]['managed']
     unmanaged = weekly_data[week_key]['unmanaged']
     total = managed + unmanaged
     pct_managed = (managed / total * 100) if total > 0 else 0
     
-    # Get date range for the week
     dates = weekly_data[week_key]['dates']
     start_date = min(dates).strftime('%m/%d')
     end_date = max(dates).strftime('%m/%d')
     
-    results.append({
-        'week': week_key,
-        'date_range': f"{start_date}-{end_date}",
-        'managed': managed,
-        'unmanaged': unmanaged,
-        'total': total,
-        'pct_managed': pct_managed
-    })
-
-# Create ASCII bar chart
-print("\nManaged Transport Order Percentage by Week")
-print("=" * 90)
-print(f"{'Week':<12} {'Date Range':<14} {'Managed %':<10} {'Total':<10} Bar")
-print("-" * 90)
-
-for result in results:
-    if result['week'] < '<start-week>':  # Optional: filter to specific start week
-        continue
-        
-    week = result['week']
-    date_range = result['date_range']
-    pct = result['pct_managed']
-    total = result['total']
-    
-    # Create bar (max 40 characters)
-    bar_length = int(pct / 100 * 40)
+    # Create ASCII bar (max 40 characters)
+    bar_length = int(pct_managed / 100 * 40)
     bar = '█' * bar_length
     
-    print(f"{week:<12} {date_range:<14} {pct:>6.1f}%    {total:>6,}     {bar}")
+    print(f"{week_key:<12} {start_date}-{end_date:<14} {pct_managed:>6.1f}%    {total:>6,}     {bar}")
 
 print("=" * 90)
-
-# Summary stats
-all_managed = sum(r['managed'] for r in results)
-all_unmanaged = sum(r['unmanaged'] for r in results)
-all_total = all_managed + all_unmanaged
-overall_pct = (all_managed / all_total * 100) if all_total > 0 else 0
-
-print(f"\nSummary:")
-print(f"  Total Orders: {all_total:,}")
-print(f"  Managed: {all_managed:,} ({overall_pct:.1f}%)")
-print(f"  Unmanaged: {all_unmanaged:,} ({100-overall_pct:.1f}%)")
 ```
 
-### Step 3: Run the visualization
+## Filtering by office or other dimensions
+
+To analyze specific offices, filter for all offices then post-process:
 
 ```bash
-python3 /tmp/process_weekly_managed.py
+# Get data for all offices
+xbe summarize transport-order-efficiency-summary create \
+  --group-by pickup_date,is_managed,project_office \
+  --filter broker=<broker-id> \
+  --filter pickup_date_min=<start-date> \
+  --filter pickup_date_max=<end-date> \
+  --json > /tmp/all_offices_managed.json
 ```
 
-## Key techniques
+```python
+# Then filter in Python for specific office
+for row in data['rows']:
+    if row.get('project_office_name') != '<office-name>':
+        continue
+    # ... process as above
+```
 
-- **ISO week calculation**: Use `date_obj.isocalendar()` to get the ISO year and week number for grouping
-- **Date range tracking**: Collect all dates for each week and use `min()/max()` to find the actual start/end dates
-- **ASCII bars**: Scale the bar length proportionally to the percentage (e.g., `int(pct / 100 * 40)` for max 40 chars)
-- **Date formatting**: Use `strftime('%m/%d')` for compact date display in charts
+## Notes
+
+- The `--filter project_office=<office-name>` parameter expects an office ID (integer), not a name (string), which causes a 500 error. Filter by office name in post-processing instead.
+- Use ISO week calculations (`isocalendar()`) for consistent weekly grouping across year boundaries.
+- ASCII bar charts provide quick visual feedback without requiring external tools.
+- For summary statistics across all weeks, sum up the managed/unmanaged counts and calculate the overall percentage.
