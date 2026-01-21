@@ -5,49 +5,47 @@ when: When you need to reorder existing culture values and update their descript
 
 # Updating culture value ordering and descriptions
 
-When you need to reorder existing culture values and update their descriptions (rather than replacing the entire set), use the `xbe do culture-values update` command with the `--position` and `--description` flags.
+When you need to reorder culture values and update their descriptions (without replacing the entire set), you can update both the position and description in a single command.
 
-## Understanding the approach
+## Single command approach
 
-- Each culture value has an ID that persists across updates
-- You can update position and description independently or together
-- Position updates reorder values (0-indexed)
-- Description updates replace the entire description text
+Update both position and description in one command:
 
-## Step-by-step workflow
-
-1. **First, view the current state** to understand what needs to change:
 ```bash
-xbe view culture-values list --limit 1000 --json | jq '.[] | select(.organization == "<org-name>")' | jq -s 'sort_by(.sequence_position) | .[] | {id, position: .sequence_position, name, description}'
-```
-
-2. **Update each value's position and description**:
-```bash
-xbe do culture-values update <value-id> --position <new-position> --description "<new-description>"
-```
-
-3. **Verify the final result**:
-```bash
-xbe view culture-values list --limit 1000 --json | jq '.[] | select(.organization == "<org-name>")' | jq -s 'sort_by(.sequence_position) | .[] | {position: .sequence_position, name, description}'
+xbe do culture-values update <culture-value-id> --position <position> --description "<new-description>"
 ```
 
 ## Example: Implementing an alternating DOING/BEING pattern
 
-If you need to reorder values to alternate between two categories:
+When restructuring values to alternate between categories:
 
 ```bash
-# Move first BEING value to position 1
-xbe do culture-values update <value-id> --position 1 --description "BEING: <description text>"
+# Move first value to position 0 and update description
+xbe do culture-values update <value-id-1> --position 0 --description "DOING: <description text>"
 
-# Move first DOING value to position 0
-xbe do culture-values update <value-id> --position 0 --description "DOING: <description text>"
+# Move second value to position 1 and update description  
+xbe do culture-values update <value-id-2> --position 1 --description "BEING: <description text>"
 
-# Continue alternating pattern...
+# Move third value to position 2 and update description
+xbe do culture-values update <value-id-3> --position 2 --description "DOING: <description text>"
+
+# Continue pattern...
 ```
 
-## Tips
+## Workflow for reorganizing culture values
 
-- Update positions sequentially to avoid conflicts
-- Include category labels at the start of descriptions for clarity
-- Consider explaining the relationship between categories in descriptions
-- Use jq to filter and format output for verification
+1. First, list all current values to get their IDs:
+```bash
+xbe view culture-values list --limit 1000 --json | jq '.[] | select(.organization == "<organization-name>")'
+```
+
+2. Update each value with new position and description in sequence
+
+3. Verify the final result:
+```bash
+xbe view culture-values list --limit 1000 --json | jq '.[] | select(.organization == "<organization-name>")' | jq -s 'sort_by(.sequence_position) | .[] | {position: .sequence_position, name, description}'
+```
+
+## Note about value names
+
+The `name` field of the value remains unchanged - only the `description` and `sequence_position` are updated. If you need to change the actual value name, you would need to replace the entire culture value set using the replacement approach instead.
