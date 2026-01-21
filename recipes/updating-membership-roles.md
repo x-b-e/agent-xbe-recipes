@@ -1,50 +1,51 @@
 ---
 title: Updating membership roles
-when: When you need to change a user's role within an organization (e.g., from manager to operations)
+when: When you need to change a user's role within an organization (e.g., from operations to manager or vice versa)
 ---
 
 # Updating membership roles
 
-## Problem
-You need to change a user's role (kind) within an organization membership, such as changing from 'manager' to 'operations'.
+## Context
+Memberships define a user's relationship with an organization. The `kind` field determines whether they have an operations role or a manager role, which affects their permissions within the organization.
 
-## Solution
-Use the `xbe do memberships update` command with the membership ID and the `--kind` flag:
+## Prerequisites
+1. Know the membership ID you want to update
+   - Use `xbe view memberships list --user <user-id>` to find membership IDs
+2. Understand the role kinds:
+   - `operations`: operational role with limited permissions
+   - `manager`: management role with elevated permissions (e.g., can see rates as manager)
 
-```bash
-xbe do memberships update <membership-id> --kind <role-kind>
-```
+## Steps
 
-## Valid role kinds
-Common role kinds include:
-- `operations`
-- `manager`
-
-## Example workflow
-
-1. First, find the membership ID you want to update:
+### 1. Identify the membership to update
 ```bash
 xbe view memberships list --user <user-id>
 ```
 
-2. Update the membership role:
+This will show all memberships for the user with their current role kind.
+
+### 2. Update the membership role
 ```bash
+xbe do memberships update <membership-id> --kind <new-role-kind>
+```
+
+Examples:
+```bash
+# Change from operations to manager
+xbe do memberships update <membership-id> --kind manager
+
+# Change from manager to operations
 xbe do memberships update <membership-id> --kind operations
 ```
 
-## Output
-The command returns detailed information about the updated membership:
-- ID and type
-- User and organization details
-- Updated role (kind and admin status)
-- Permissions associated with the role
-- Notification settings
+### 3. Verify the update
+The command will return the updated membership details showing:
+- The new role kind
+- Updated permissions based on the new role
+- Admin status (unchanged unless explicitly updated)
 
 ## Notes
-- Changing the role kind may automatically adjust associated permissions
-- The output shows all permissions and notification settings for the updated membership
-
-## Related recipes
-- creating-memberships.md - Creating new memberships
-- filtering-memberships-by-user-id.md - Finding memberships to update
-- listing-user-memberships.md - Viewing user memberships
+- Changing to `manager` role typically grants permissions like "Can See Rates As Manager"
+- Changing to `operations` role typically removes manager-level permissions
+- Admin status is separate from role kind and must be updated independently if needed
+- The update is immediate and affects the user's access to the organization
