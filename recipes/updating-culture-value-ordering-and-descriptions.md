@@ -5,47 +5,45 @@ when: When you need to reorder existing culture values and update their descript
 
 # Updating culture value ordering and descriptions
 
-When you need to reorder culture values and update their descriptions (without replacing the entire set), you can update both the position and description in a single command.
+## When to use
+When you need to reorder existing culture values and update their descriptions without replacing the entire set, especially when implementing a structured alternating pattern between categories.
 
-## Single command approach
+## Pattern
 
-Update both position and description in one command:
-
+### 1. First, view the current culture values to understand what needs to change
 ```bash
-xbe do culture-values update <culture-value-id> --position <position> --description "<new-description>"
+xbe view culture-values list --limit 1000 --json | jq '.[] | select(.organization == "<organization-name>")' | jq -s 'sort_by(.sequence_position)'
 ```
 
-## Example: Implementing an alternating DOING/BEING pattern
-
-When restructuring values to alternate between categories:
-
+### 2. Update each value's position and description individually
 ```bash
-# Move first value to position 0 and update description
-xbe do culture-values update <value-id-1> --position 0 --description "DOING: <description text>"
-
-# Move second value to position 1 and update description  
-xbe do culture-values update <value-id-2> --position 1 --description "BEING: <description text>"
-
-# Move third value to position 2 and update description
-xbe do culture-values update <value-id-3> --position 2 --description "DOING: <description text>"
-
-# Continue pattern...
+xbe do culture-values update <culture-value-id> --position <new-position> --description "<new-description>"
 ```
 
-## Workflow for reorganizing culture values
-
-1. First, list all current values to get their IDs:
-```bash
-xbe view culture-values list --limit 1000 --json | jq '.[] | select(.organization == "<organization-name>")'
-```
-
-2. Update each value with new position and description in sequence
-
-3. Verify the final result:
+### 3. Verify the final result with a formatted view
 ```bash
 xbe view culture-values list --limit 1000 --json | jq '.[] | select(.organization == "<organization-name>")' | jq -s 'sort_by(.sequence_position) | .[] | {position: .sequence_position, name, description}'
 ```
 
-## Note about value names
+## Example workflow
 
-The `name` field of the value remains unchanged - only the `description` and `sequence_position` are updated. If you need to change the actual value name, you would need to replace the entire culture value set using the replacement approach instead.
+Implementing an alternating DOING/BEING pattern:
+
+```bash
+# Move and update first value
+xbe do culture-values update 253 --position 0 --description "DOING: Taking ownership and accountability for our actions and outcomes. Works in balance with BEING values (Gifted, Humble, Quality, Beautiful)."
+
+# Move and update second value
+xbe do culture-values update 257 --position 1 --description "BEING: Recognizing and honoring our unique talents and the gifts we bring. Works in balance with DOING values (Responsible, Brave, Fast, Metabolic)."
+
+# Continue for remaining values...
+
+# Verify the final ordering and descriptions
+xbe view culture-values list --limit 1000 --json | jq '.[] | select(.organization == "XBE Office")' | jq -s 'sort_by(.sequence_position) | .[] | {position: .sequence_position, name, description}'
+```
+
+## Notes
+- The value name itself remains unchanged (e.g., "Responsible") - only the position and description are updated
+- Labels like "DOING:" and "BEING:" go in the description field, not the name
+- Use `--position` to reorder values (0-indexed)
+- The verification jq query provides a clean view of position, name, and description for review
