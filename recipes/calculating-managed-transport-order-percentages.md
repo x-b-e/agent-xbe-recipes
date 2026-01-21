@@ -1,97 +1,82 @@
 ---
 title: Calculating managed transport order percentages
-when: When you need to calculate the percentage of managed vs unmanaged transport orders for a broker
+when: When you need to calculate the percentage of managed vs unmanaged transport orders for a broker, either as a simple total or as a time-series trend
 ---
 
-## Overview
+# Calculating managed transport order percentages
 
-To calculate what percentage of transport orders are managed vs unmanaged for a broker, use the `transport-order-efficiency-summary` command with `--group-by is_managed`.
+## Simple percentage calculation
 
-## Key Concepts
-
-### Date Filters Matter
-
-The efficiency summary supports two different date filters that produce different results:
-
-- **ordered_date** - When the order was created
-- **pickup_date** - When the pickup was scheduled
-
-For questions about "today's orders" or "orders happening today", use `pickup_date` filters as this reflects operational activity. Use `ordered_date` filters when analyzing when orders were placed.
-
-## Basic Command
+To get the overall percentage of managed vs unmanaged orders:
 
 ```bash
+# Get today's managed order percentage
 xbe summarize transport-order-efficiency-summary create \
   --group-by is_managed \
+  --filter broker=<broker-id> \
+  --filter pickup_date_min=<date> \
+  --filter pickup_date_max=<date> \
+  --json
+```
+
+The output includes `transport_order_count` for each `is_managed` value (true/false).
+
+## Weekly trend analysis
+
+To analyze how the managed percentage has changed over time:
+
+```bash
+# Get data grouped by both date and managed status
+xbe summarize transport-order-efficiency-summary create \
+  --group-by pickup_date,is_managed \
   --filter broker=<broker-id> \
   --filter pickup_date_min=<start-date> \
-  --filter pickup_date_max=<end-date>
+  --filter pickup_date_max=<end-date> \
+  --json > /tmp/managed_by_date.json
 ```
 
-## Example Output
+## Processing weekly trends with Python
 
+Use Python to aggregate daily data into weekly percentages:
+
+```python
+import json
+from datetime import datetime
+from collections import defaultdict
+
+with open('/tmp/managed_by_date.json', 'r') as f:
+    data = json.load(f)
+
+weekly_data = defaultdict(lambda: {'managed': 0, 'unmanaged': 0})
+
+for row in data['rows']:
+    pickup_date = row['pickup_date']
+    is_managed = row['is_managed']
+    count = int(row['transport_order_count'])
+    
+    # Get ISO week
+    date_obj = datetime.strptime(pickup_date, '%Y-%m-%d')
+    year = date_obj.isocalendar()[0]
+    week = date_obj.isocalendar()[1]
+    week_key = f"{year}-W{week:02d}"
+    
+    if is_managed:
+        weekly_data[week_key]['managed'] += count
+    else:
+        weekly_data[week_key]['unmanaged'] += count
+
+# Calculate percentages
+for week_key in sorted(weekly_data.keys()):
+    managed = weekly_data[week_key]['managed']
+    unmanaged = weekly_data[week_key]['unmanaged']
+    total = managed + unmanaged
+    pct_managed = (managed / total * 100) if total > 0 else 0
+    print(f"{week_key}: {pct_managed:.1f}% ({total} orders)")
 ```
-is_managed  transport_order_count  ordered_miles_sum  routed_miles_sum  deviated_miles_sum
-true        398                    86268.39           168131.43         30581.18
-false       367                    74872.54           120332.01         30607.07
-```
 
-Calculate percentage:
-- Managed: 398 / (398 + 367) = 52%
-- Unmanaged: 367 / (398 + 367) = 48%
+## Key insights
 
-## Date Filter Examples
-
-### For today's pickups:
-```bash
-xbe summarize transport-order-efficiency-summary create \
-  --group-by is_managed \
-  --filter broker=<broker-id> \
-  --filter pickup_date_min=<today-date> \
-  --filter pickup_date_max=<today-date>
-```
-
-### For orders created today:
-```bash
-xbe summarize transport-order-efficiency-summary create \
-  --group-by is_managed \
-  --filter broker=<broker-id> \
-  --filter ordered_date_min=<today-date> \
-  --filter ordered_date_max=<today-date>
-```
-
-## Available Group-by Attributes
-
-The efficiency summary supports many group-by options if you need breakdowns:
-- broker
-- customer
-- driver
-- is_managed
-- ordered_date
-- pickup_date
-- project_category
-- project_division
-- project_office
-- transport_order
-- transport_order_status
-- was_unmanaged
-
-## Available Filters
-
-- broker
-- customer
-- driver
-- is_managed (true/false)
-- was_unmanaged (true/false)
-- ordered_date / ordered_date_min / ordered_date_max
-- pickup_date / pickup_date_min / pickup_date_max
-- project_division
-- project_office
-- project_category
-- transport_order
-- transport_order_status
-
-## Related Commands
-
-- `xbe summarize transport-summary` - Status breakdowns but does NOT support filtering by managed status
-- `xbe view transport-orders list` - Individual order listing with --is-managed filter
+- Group by both `pickup_date` and `is_managed` to get time-series data
+- Aggregate daily data into weekly buckets using ISO week numbers
+- Calculate percentage as: `(managed / total) * 100`
+- Consider creating visualizations (ASCII bar charts or HTML) for stakeholder presentations
