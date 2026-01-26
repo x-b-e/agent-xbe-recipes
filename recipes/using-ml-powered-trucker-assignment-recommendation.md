@@ -5,133 +5,157 @@ when: When you need to assign truckers to lineup shifts and want to use the syst
 
 # Using ML-powered trucker assignment recommendations for lineup shifts
 
-The system provides an ML-powered recommendation engine that ranks potential truckers for a lineup shift by probability, making trucker assignment more data-driven.
+## Context
+The system provides ML-powered recommendations for assigning truckers to lineup shifts. The recommendation engine analyzes historical patterns, trucker performance, and other factors to rank candidate truckers by probability of being the best match.
 
-## Basic workflow
+## Important: Use Lineup Shift IDs, Not Job Schedule Shift IDs
+The ML recommendation system works with **lineup-job-schedule-shifts**, not job-schedule-shifts. You must first create the lineup shift before generating recommendations.
 
-### 1. Generate recommendations for a shift
+## Workflow
 
+### Step 1: Create Lineup Shift (Without Trucker)
 ```bash
-xbe do lineup-job-schedule-shift-trucker-assignment-recommendations create \
-  --lineup-job-schedule-shift <shift-id> \
-  --json
+# Create the lineup shift first
+lineup_shift_id=$(xbe do lineup-job-schedule-shifts create \
+  --lineup <lineup-id> \
+  --job-schedule-shift <job-schedule-shift-id> \
+  --is-ready-to-dispatch false \
+  --json | jq -r '.id')
 ```
 
-Returns:
-```json
-{
-  "id": "<recommendation-id>",
-  "candidates_count": 76
-}
+### Step 2: Generate ML Recommendations
+```bash
+# Create recommendation for the lineup shift
+rec_id=$(xbe do lineup-job-schedule-shift-trucker-assignment-recommendations create \
+  --lineup-job-schedule-shift $lineup_shift_id \
+  --json | jq -r '.id')
 ```
 
-### 2. View ranked candidates
-
+### Step 3: View Recommendations
 ```bash
-xbe view lineup-job-schedule-shift-trucker-assignment-recommendations show <recommendation-id> \
+# View top recommendations with probabilities
+xbe view lineup-job-schedule-shift-trucker-assignment-recommendations show $rec_id \
   --fields candidates \
   --json
 ```
 
-Returns candidates ranked by probability:
+Example output structure:
 ```json
 {
   "candidates": [
     {
       "rank": 0,
-      "trucker_id": <trucker-id>,
-      "probability": 0.6668,
-      "cumulative_probability": 0.6668,
-      "score": -1.096
+      "probability": 0.67,
+      "trucker": {
+        "id": "1126",
+        "company-name": "AB Rock"
+      }
     },
     {
       "rank": 1,
-      "trucker_id": <trucker-id>,
-      "probability": 0.0214,
-      "cumulative_probability": 0.6882,
-      "score": -4.536
+      "probability": 0.12,
+      "trucker": {
+        "id": "2341",
+        "company-name": "Scot Heller"
+      }
+    },
+    {
+      "rank": 2,
+      "probability": 0.08,
+      "trucker": {
+        "id": "3452",
+        "company-name": "Knifong"
+      }
     }
   ]
 }
 ```
 
-### 3. View top N recommendations with jq
-
+### Step 4: Assign Chosen Trucker
 ```bash
-xbe view lineup-job-schedule-shift-trucker-assignment-recommendations show <recommendation-id> \
-  --fields candidates \
-  --json | jq '.candidates[0:5]'
-```
-
-### 4. Assign the top-ranked trucker
-
-```bash
-xbe do lineup-job-schedule-shifts update <shift-id> \
-  --trucker <trucker-id> \
+# Assign the chosen trucker (e.g., rank 0 recommendation)
+xbe do lineup-job-schedule-shifts update $lineup_shift_id \
+  --trucker <chosen-trucker-id> \
   --is-ready-to-dispatch true
 ```
 
-## Understanding the output
-
-- **rank**: 0-indexed ranking (0 = best match)
-- **probability**: Individual probability for this trucker (0-1 scale)
-- **cumulative_probability**: Sum of probabilities up to this rank
-- **score**: Raw ML model score (lower/more negative = higher probability)
-- **trucker_id**: The recommended trucker
-
-## Interpreting probabilities
-
-- **High confidence (>50%)**: Clear best choice, assign with confidence
-- **Moderate confidence (20-50%)**: Strong candidate but consider context
-- **Low confidence (<20%)**: Multiple viable options, may need human judgment
-- **Close probabilities (35% vs 33%)**: May warrant review or business rule checks
-
-## Bulk assignment pattern
-
+## Extracting Top Recommendation
 ```bash
-for shift_id in <shift-id-1> <shift-id-2> <shift-id-3>; do
-  # Generate recommendations
+# Get the top recommended trucker ID
+top_trucker=$(xbe view lineup-job-schedule-shift-trucker-assignment-recommendations show $rec_id \
+  --json | jq -r '.candidates | sort_by(.rank) | .[0].trucker.id')
+
+# Auto-assign top recommendation
+xbe do lineup-job-schedule-shifts update $lineup_shift_id \
+  --trucker $top_trucker \
+  --is-ready-to-dispatch true
+```
+
+## Formatting for Human Review
+```bash
+# Show recommendations in readable format
+xbe view lineup-job-schedule-shift-trucker-assignment-recommendations show $rec_id \
+  --json | jq -r '.candidates | sort_by(.rank) | .[] | "Rank \(.rank): \(.trucker."company-name") (\((.probability * 100)|floor)%)"'
+```
+
+Example output:
+```
+Rank 0: AB Rock (67%)
+Rank 1: Scot Heller (12%)
+Rank 2: Knifong (8%)
+```
+
+## Batch Processing Multiple Shifts
+```bash
+# Process all shifts in a lineup with ML recommendations
+for shift_id in $(xbe view lineup-job-schedule-shifts list \
+  --lineup <lineup-id> \
+  --json | jq -r '.[] | select(.trucker == null) | .id'); do
+  
+  # Generate recommendation
   rec_id=$(xbe do lineup-job-schedule-shift-trucker-assignment-recommendations create \
-    --lineup-job-schedule-shift $shift_id --json | jq -r '.id')
+    --lineup-job-schedule-shift $shift_id \
+    --json | jq -r '.id')
   
-  # Get top trucker
-  top_trucker=$(xbe view lineup-job-schedule-shift-trucker-assignment-recommendations show $rec_id \
-    --fields candidates --json | jq -r '.candidates[0].trucker_id')
+  # Show recommendations for manual review
+  echo "Shift $shift_id recommendations:"
+  xbe view lineup-job-schedule-shift-trucker-assignment-recommendations show $rec_id \
+    --json | jq -r '.candidates | sort_by(.rank) | .[] | "  Rank \(.rank): \(.trucker."company-name") (\((.probability * 100)|floor)%)"'
   
-  # Assign it
-  xbe do lineup-job-schedule-shifts update $shift_id \
-    --trucker $top_trucker \
-    --is-ready-to-dispatch true
+  # Optional: auto-assign top recommendation
+  # top_trucker=$(xbe view lineup-job-schedule-shift-trucker-assignment-recommendations show $rec_id \
+  #   --json | jq -r '.candidates | sort_by(.rank) | .[0].trucker.id')
+  # xbe do lineup-job-schedule-shifts update $shift_id --trucker $top_trucker --is-ready-to-dispatch true
 done
 ```
 
-## Getting trucker names for recommendations
+## Common Issues
 
+### Error: Cannot create recommendation for job-schedule-shift
+The ML system requires a **lineup-job-schedule-shift** ID, not a job-schedule-shift ID. You must first add the shift to a lineup:
 ```bash
-for trucker_id in <trucker-id-1> <trucker-id-2> <trucker-id-3>; do
-  echo "Trucker $trucker_id: $(xbe view truckers show $trucker_id --json | jq -r '."company-name"')"
-done
+# Wrong: Using job-schedule-shift ID
+xbe do lineup-job-schedule-shift-trucker-assignment-recommendations create \
+  --lineup-job-schedule-shift <job-schedule-shift-id>  # ❌ Wrong resource type
+
+# Right: Create lineup shift first, then use its ID
+lineup_shift_id=$(xbe do lineup-job-schedule-shifts create \
+  --lineup <lineup-id> \
+  --job-schedule-shift <job-schedule-shift-id> \
+  --json | jq -r '.id')
+
+xbe do lineup-job-schedule-shift-trucker-assignment-recommendations create \
+  --lineup-job-schedule-shift $lineup_shift_id  # ✓ Correct
 ```
 
-## When to use this vs manual assignment
+### Understanding the Resource Hierarchy
+- `job-schedule-shift`: The original shift that needs to be worked
+- `lineup-job-schedule-shift`: That shift as part of a specific lineup (has its own ID)
+- `recommendation`: Created for the lineup-job-schedule-shift
+- `trucker assignment`: Set on the lineup-job-schedule-shift
 
-**Use recommendations when:**
-- Assigning many shifts in bulk
-- You don't have specific business requirements for a particular trucker
-- You want data-driven assignments based on historical patterns
-
-**Override recommendations when:**
-- Customer requires specific trucker
-- Trucker availability constraints (capacity, equipment, driver unavailability)
-- Business rules (e.g., "never assign X to Y on Mondays")
-- Probabilities are very close and business context matters
-
-## Re-assignment workflow
-
-If the top-ranked trucker declines or is unavailable:
-
-1. The recommendations are already generated
-2. Pick the next-ranked trucker (rank 1, 2, etc.)
-3. Update the assignment with the alternative trucker
-
-No need to regenerate recommendations - the ranked list provides alternatives.
+## Notes
+- Recommendations are based on ML analysis of historical assignments, performance, and patterns
+- The probability scores represent the model's confidence in each recommendation
+- You can accept or override recommendations based on business knowledge
+- Recommendations are specific to the lineup shift context (considering the lineup, job, timing, etc.)
