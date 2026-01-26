@@ -3,77 +3,87 @@ title: Analyzing job production plan approvals by project manager
 when: When you need to find out who approved job production plans for a specific project manager, or when you need to analyze approval patterns across multiple plans
 ---
 
-## Problem
+## Pattern
 
-You need to find who approved job production plans where a specific person was the project manager.
+To find who approved job production plans for a specific project manager:
 
-## Solution
+1. Find the project manager's user ID
+2. Get their job production plans for the time period
+3. For each plan, find the approval status change record
+4. Extract the approver from the status change record
 
-### Step 1: Find plans managed by the project manager
+## Key Insight
 
-First, get all job production plans where the person was the project manager during the time period:
+The approver information is stored in the `job-production-plan-status-changes` resource under the `changed-by` field. This field is **only available when using `show`**, not when using `list`. You must:
+
+1. Use `list` to find the status change ID
+2. Use `show` with that ID to get the `changed-by` field
+
+## Example
 
 ```bash
+# 1. Find the project manager's user ID
+xbe view users list --name-cont "<manager-name>" --json | jq -r '.[0].id'
+
+# 2. Get their job production plans for a date range
 xbe view job-production-plans list \
+  --start-on-min <start-date> \
+  --start-on-max <end-date> \
   --project-manager <user-id> \
-  --start-at-min <start-date> \
-  --start-at-max <end-date> \
-  --json > /tmp/plans.json
-```
+  --json \
+  --limit 500 > /tmp/plans.json
 
-### Step 2: Extract plan IDs
-
-Save the plan IDs to a file for iteration:
-
-```bash
+# 3. Extract plan IDs
 jq -r '.[].id' /tmp/plans.json > /tmp/plan_ids.txt
-```
 
-### Step 3: Find approvals for each plan
-
-For each plan, query the status changes to find approvals. **Important**: The `changed-by` field is only available in the `show` command, not in `list` output.
-
-```bash
+# 4. For each plan, find who approved it
+# Note: Must use 'show' to get 'changed-by' field
 for plan_id in $(cat /tmp/plan_ids.txt); do
   echo "Plan: $plan_id"
-  # Get approval status change
   xbe view job-production-plan-status-changes list \
     --job-production-plan $plan_id \
     --status approved \
-    --json 2>&1 | \
-  jq -r '.[0] | "\(.id)"' | \
-  # Get full details including changed-by
-  xargs -I {} xbe view job-production-plan-status-changes show {} --json 2>&1 | \
-  jq -r '."changed-by"'
+    --json 2>&1 | jq -r '.[0] | "\(.id)"' | \
+    xargs -I {} xbe view job-production-plan-status-changes show {} --json 2>&1 | \
+    jq -r '."changed-by"'
 done
-```
 
-### Step 4: Summarize approvers
-
-Count how many times each person approved:
-
-```bash
+# 5. Get a summary count of approvers
 for plan_id in $(cat /tmp/plan_ids.txt); do
   xbe view job-production-plan-status-changes list \
     --job-production-plan $plan_id \
     --status approved \
-    --json 2>&1 | \
-  jq -r '.[0] | "\(.id)"' | \
-  xargs -I {} xbe view job-production-plan-status-changes show {} --json 2>&1 | \
-  jq -r '."changed-by"'
+    --json 2>&1 | jq -r '.[0] | "\(.id)"' | \
+    xargs -I {} xbe view job-production-plan-status-changes show {} --json 2>&1 | \
+    jq -r '."changed-by"'
 done | sort | uniq -c
 ```
 
-This will output something like:
-```
-   8 Patrick K Mulvany
-   2 Jeremy Davis
-   1 Travis Lewis
-```
+## Common Patterns
 
-## Key Insights
+### Approving own plans
+It's common for project managers to approve their own plans. In the data, you may see the same person as both `project-manager` and `changed-by`.
 
-- The `job-production-plan-status-changes` resource tracks all status changes including approvals
-- Filter by `--status approved` to find only approval events
-- The `list` command returns limited fields; use `show <id>` to get the `changed-by` field
-- Project managers may approve their own plans in some workflows
+### Multiple time periods
+To compare approval patterns across different months:
+
+```bash
+# Query plans for each month separately
+for month in 10 11 12; do
+  echo "Month: $month"
+  xbe view job-production-plans list \
+    --start-on-min 2025-${month}-01 \
+    --start-on-max 2025-${month}-31 \
+    --project-manager <user-id> \
+    --json --limit 500 | \
+    jq -r '.[].id' | \
+    while read plan_id; do
+      xbe view job-production-plan-status-changes list \
+        --job-production-plan $plan_id \
+        --status approved \
+        --json 2>&1 | jq -r '.[0] | "\(.id)"' | \
+        xargs -I {} xbe view job-production-plan-status-changes show {} --json 2>&1 | \
+        jq -r '."changed-by"'
+    done | sort | uniq -c
+done
+```
