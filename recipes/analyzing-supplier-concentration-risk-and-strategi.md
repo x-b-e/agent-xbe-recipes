@@ -1,31 +1,28 @@
 ---
 title: Analyzing supplier concentration risk and strategic dependency
-when: When you need to assess how dependent a broker is on a specific trucker (or vice versa), quantify concentration risk, evaluate alternative capacity, and develop risk mitigation strategies
+when: When you need to assess how dependent a broker is on a specific trucker (or vice versa), quantify concentration risk, evaluate alternative capacity, estimate fleet requirements for replacement scenarios, and develop risk mitigation strategies
 ---
 
 # Analyzing supplier concentration risk and strategic dependency
 
-## Overview
-This recipe shows how to conduct a comprehensive supplier concentration analysis to understand dependency between a broker and a key trucker, quantify the risk, and develop mitigation strategies.
+When analyzing the strategic dependency between a broker and their primary trucker, you need to quantify the relationship from multiple angles: volume concentration, financial dependency, operational capacity, and replacement feasibility.
 
-## Step 1: Identify the entities
-
-Find the broker and trucker IDs:
+## Step 1: Identify the broker and trucker
 
 ```bash
-# Find broker ID
+# Find the broker ID
 xbe view brokers list --company-name "<broker-name>" --json
 
-# Find trucker ID
+# Find the trucker ID
 xbe view truckers list --name "<trucker-name>" --json
 ```
 
-## Step 2: Assess broker's dependency on the trucker
+## Step 2: Analyze volume concentration
 
-Get the broker's full trucker mix to see market share:
+Get the broker's total tonnage broken down by trucker to see concentration:
 
 ```bash
-# Get all truckers for the broker, sorted by volume
+# Recent period (avoid timeouts with large date ranges)
 xbe summarize lane-summary create \
   --filter broker=<broker-id> \
   --filter date_min=<start-date> \
@@ -37,36 +34,55 @@ xbe summarize lane-summary create \
   --json
 ```
 
-**Note:** If you get a 503 timeout error with large date ranges (e.g., 2+ years), break it into smaller periods:
-- Current year YTD
-- Previous full year
-- Recent quarter for trend analysis
-
-Calculate market share:
+If you get timeouts with large date ranges, break into smaller periods:
 
 ```bash
-# Get total broker volume
+# Current year
 xbe summarize lane-summary create \
   --filter broker=<broker-id> \
-  --filter date_min=<start-date> \
-  --filter date_max=<end-date> \
+  --filter date_min=<current-year>-01-01 \
+  --filter date_max=<current-date> \
+  --group-by trucker \
   --metrics tons_sum \
-  --json | jq -r '.rows[0].tons_sum'
+  --sort tons_sum:desc \
+  --limit 50 \
+  --json
 
-# Calculate percentage: (trucker tons / total tons) * 100
+# Previous year for comparison
+xbe summarize lane-summary create \
+  --filter broker=<broker-id> \
+  --filter date_min=<previous-year>-01-01 \
+  --filter date_max=<previous-year>-12-31 \
+  --group-by trucker \
+  --metrics tons_sum \
+  --sort tons_sum:desc \
+  --limit 50 \
+  --json
 ```
 
-Key metrics to calculate:
-- **Trucker's market share** with the broker (e.g., 51% = high concentration risk)
-- **Gap to #2 trucker** (e.g., 5.8x larger = significant dependency)
-- **Alternative capacity** (sum of next 5-10 truckers)
+## Step 3: Calculate concentration metrics
 
-## Step 3: Assess trucker's dependency on the broker
-
-Check if the trucker works with other brokers:
+Use jq to calculate what percentage of volume comes from the primary trucker:
 
 ```bash
-# Get all brokers the trucker works with
+# From the JSON output above
+cat <output-file> | jq '
+  .values as $data |
+  ($data[0][1] | tonumber) as $top_trucker |
+  ($data | map(.[1] | tonumber) | add) as $total |
+  {
+    top_trucker_name: $data[0][0],
+    top_trucker_tons: $top_trucker,
+    total_tons: $total,
+    concentration_pct: (($top_trucker / $total) * 100 | round)
+  }'
+```
+
+## Step 4: Analyze the reverse dependency
+
+Get the trucker's volume broken down by broker to see how dependent they are on this broker:
+
+```bash
 xbe summarize lane-summary create \
   --filter trucker=<trucker-id> \
   --filter date_min=<start-date> \
@@ -77,134 +93,210 @@ xbe summarize lane-summary create \
   --json
 ```
 
-If the trucker shows 100% concentration with one broker, the dependency is mutual.
+## Step 5: Analyze monthly patterns and trends
 
-## Step 4: Analyze recent trends
-
-Check if concentration is increasing or stable:
+Look at the relationship over time to identify trends:
 
 ```bash
-# Get recent quarter data
-xbe summarize lane-summary create \
-  --filter broker=<broker-id> \
-  --filter date_min=<recent-quarter-start> \
-  --filter date_max=<recent-quarter-end> \
-  --group-by trucker \
-  --metrics tons_sum \
-  --sort tons_sum:desc \
-  --limit 10 \
-  --json
-
-# Get monthly trend for the specific trucker
+# Monthly breakdown for the primary relationship
 xbe summarize lane-summary create \
   --filter broker=<broker-id> \
   --filter trucker=<trucker-id> \
   --filter date_min=<start-date> \
   --filter date_max=<end-date> \
   --group-by month \
-  --metrics tons_sum \
+  --metrics tons_sum,trips_sum,total_cost_sum \
   --json
 ```
 
-## Step 5: Assess lane concentration
+## Step 6: Estimate fleet size requirements for replacement scenarios
 
-Understand if the trucker is concentrated on a few lanes or diversified:
+To understand what it would take to replace the primary trucker, calculate their fleet size:
+
+### Method 1: Annual volume-based calculation
 
 ```bash
-# Get top lanes for the trucker with this broker
+# Industry standard: ~13,500 tons per truck per year for aggregate hauling
+# Annual tons ÷ 13,500 = approximate truck count
+```
+
+### Method 2: Peak month analysis
+
+Identify the peak month and calculate daily requirements:
+
+```bash
+# Get monthly data to find peak
 xbe summarize lane-summary create \
   --filter broker=<broker-id> \
   --filter trucker=<trucker-id> \
   --filter date_min=<start-date> \
   --filter date_max=<end-date> \
-  --group-by origin,destination \
-  --metrics tons_sum \
-  --sort tons_sum:desc \
-  --limit 20 \
-  --json
-```
-
-Calculate lane concentration:
-- Top 1 lane as % of trucker's volume
-- Top 3 lanes as % of trucker's volume
-
-## Step 6: Evaluate alternative capacity
-
-For each alternative trucker, assess their capacity to scale:
-
-```bash
-# Get each alternative trucker's volume with the broker
-xbe summarize lane-summary create \
-  --filter broker=<broker-id> \
-  --filter trucker=<alternative-trucker-id> \
-  --filter date_min=<start-date> \
-  --filter date_max=<end-date> \
+  --group-by month \
   --metrics tons_sum,trips_sum \
   --json
+
+# Calculate from peak month:
+# <peak-tons> ÷ 25 tons/load = <trips-in-peak-month>
+# <trips-in-peak-month> ÷ 22 working days = <trips-per-day>
+# <trips-per-day> ÷ 3 trips/truck/day = <trucks-needed-in-peak>
 ```
 
-Key assessment:
-- What % of the primary trucker's volume could each alternative handle?
-- If all top 5 alternatives doubled capacity, what % of primary trucker could they replace?
-- Are "unmanaged truckers" (customer-owned) inflating the alternative count?
+### Method 3: Driver and shift analysis
 
-## Step 7: Compile risk assessment
+Analyze actual driver data to validate fleet size estimates:
 
-Create a summary with:
+```bash
+# Get driver activity for peak month
+xbe summarize shift-summary create \
+  --filter broker=<broker-id> \
+  --filter trucker=<trucker-id> \
+  --filter date_min=<peak-month-start> \
+  --filter date_max=<peak-month-end> \
+  --group-by driver \
+  --metrics driver_day_count,shift_count_sum,duration_hours_sum \
+  --json
+```
 
-1. **Dependency metrics:**
-   - Primary trucker's market share (High risk: >40%)
-   - Mutual dependency (Does trucker show 100% concentration?)
-   - Trend (Increasing, stable, or decreasing?)
+From shift data:
+- Count drivers working 15+ days (full-time core fleet)
+- Count drivers working 5-14 days (part-time/relief)
+- Count drivers working 1-4 days (spot/seasonal)
+- Look for null driver entries (unattributed shifts suggest owner-operators)
 
-2. **Alternative capacity:**
-   - Aggregate capacity of top 5 alternatives
-   - Number of truckers needed to replace primary
-   - Backfill feasibility (Could alternatives scale quickly?)
+### Typical fleet composition for aggregate haulers:
 
-3. **Lane-specific exposure:**
-   - Top 3 lanes concentration
-   - Geographic concentration
-   - Material/equipment specialization
+```
+Core Fleet: 50-65% of capacity
+- Company-owned power units
+- Full-time drivers
+- Predictable, controllable capacity
 
-4. **Strategic impact assessment:**
-   - Immediate capacity gap if relationship ends
-   - Operational continuity risk
-   - Customer impact (which customers rely on these lanes?)
+Owner-Operator Partners: 30-40% of capacity  
+- Dedicated or semi-dedicated relationships
+- Lower capital requirements for the trucker
+- Need strong relationships to ensure availability
 
-## Step 8: Research and mitigation priorities
+Seasonal/Spot Capacity: 10-20% of capacity
+- Peak season augmentation (April-November)
+- Fill-in during maintenance/breakdowns
+- Higher per-trip cost, no fixed cost
+```
 
-Based on risk level, develop a research and mitigation plan:
+### Equipment requirements:
 
-**Priority 1 - Relationship intelligence:**
-- Contract terms and renewal dates
-- Service quality and dispute history
-- Financial stability of the trucker
-- Strategic intentions (do they want to diversify?)
+```
+End dump trailers (standard aggregate hauling)
+- 22-25 ton capacity per load
+- Day cabs for local/regional work  
+- Mix of newer fleet (company) + older (owner-operators)
+```
 
-**Priority 2 - Market capacity:**
-- Interview alternative truckers on scale capacity
-- Geographic capacity mapping
-- Lane-by-lane replacement feasibility
+## Step 7: Evaluate alternative capacity
 
-**Priority 3 - Strategic options:**
-- Diversification targets (e.g., reduce from 51% to 35%)
-- Contingency planning (30/60/90 day response plans)
-- Relationship investment vs gradual reduction
+Analyze the capacity of other truckers in the network:
 
-**Priority 4 - Structural changes:**
-- Owned/controlled capacity evaluation
-- Technology improvements to attract diverse truckers
-- M&A opportunities
+```bash
+# Get all truckers sorted by volume
+xbe summarize lane-summary create \
+  --filter broker=<broker-id> \
+  --filter date_min=<start-date> \
+  --filter date_max=<end-date> \
+  --group-by trucker \
+  --metrics tons_sum \
+  --sort tons_sum:desc \
+  --limit 50 \
+  --json
+```
 
-## Risk level guidelines
+Calculate how many of the next-largest truckers would be needed:
 
-- **High risk:** >40% concentration, mutual 100% dependency, limited alternatives
-- **Moderate risk:** 25-40% concentration, some alternatives exist
-- **Low risk:** <25% concentration, many viable alternatives
+```bash
+cat <output-file> | jq '
+  .values as $data |
+  ($data[0][1] | tonumber) as $primary_tons |
+  ($data[1:] | map(.[1] | tonumber)) as $other_tons |
+  {
+    primary_tons: $primary_tons,
+    next_5_combined: ($other_tons[0:5] | add),
+    next_10_combined: ($other_tons[0:10] | add),
+    truckers_needed_to_match: ($other_tons | [foreach .[] as $t (0; . + $t; . >= $primary_tons)] | index(true) + 1)
+  }'
+```
 
-## Common patterns
+## Step 8: Calculate financial metrics
 
-- **Unmanaged truckers** in top 10 list may indicate capacity constraints (customers bringing their own trucks)
-- **100% mutual dependency** suggests both parties benefit but broker lacks negotiation leverage
-- **Stable multi-year concentration** suggests relationship is working but risk hasn't been addressed
+```bash
+# Revenue from primary trucker relationship
+xbe summarize lane-summary create \
+  --filter broker=<broker-id> \
+  --filter trucker=<trucker-id> \
+  --filter date_min=<start-date> \
+  --filter date_max=<end-date> \
+  --metrics total_cost_sum,tons_sum \
+  --json
+
+# Cost efficiency comparison
+xbe summarize lane-summary create \
+  --filter broker=<broker-id> \
+  --filter date_min=<start-date> \
+  --filter date_max=<end-date> \
+  --group-by trucker \
+  --metrics tons_sum,total_cost_sum,duration_hours_sum \
+  --json
+```
+
+Calculate cost per ton and effective hourly rate:
+
+```bash
+cat <output-file> | jq '
+  .values | map({
+    trucker: .[0],
+    tons: (.[1] | tonumber),
+    cost: (.[2] | tonumber),
+    hours: (.[3] | tonumber),
+    cost_per_ton: ((.[2] | tonumber) / (.[1] | tonumber)),
+    cost_per_hour: ((.[2] | tonumber) / (.[3] | tonumber))
+  }) | sort_by(.cost_per_ton)'
+```
+
+## Key Questions to Answer
+
+1. **Concentration Risk**: What % of broker's volume comes from this trucker?
+2. **Mutual Dependency**: What % of trucker's volume comes from this broker?
+3. **Replacement Capacity**: How many trucks would be needed to replace them? What fleet size?
+4. **Alternative Options**: How many other truckers would it take to match capacity?
+5. **Financial Impact**: What is the revenue/cost at risk?
+6. **Cost Position**: Is the primary trucker cost-competitive or premium-priced?
+7. **Seasonal Factors**: Does dependency vary by season? Peak vs off-peak needs?
+8. **Fleet Composition**: What mix of company trucks vs owner-operators?
+9. **Growth Trajectory**: Is the relationship growing, stable, or declining?
+10. **Time to Replace**: How long would it take to build alternative capacity?
+
+## Mitigation Strategies to Research
+
+1. **Diversification**: Systematically grow 2-3 alternative truckers to 30-40% of primary's capacity each
+2. **Market Development**: Recruit large truckers from adjacent markets
+3. **Contractual Protection**: Long-term contracts, minimum volume commitments, exit penalties
+4. **Internal Capacity**: Build or acquire internal trucking operation (major capital decision)
+5. **Owner-Operator Network**: Develop direct relationships with owner-operators
+6. **Seasonal Planning**: Different capacity strategies for peak vs off-peak seasons
+7. **Performance Monitoring**: Track service levels, cost trends, capacity utilization
+8. **Relationship Management**: Executive relationships, joint planning, transparency
+
+## Example Calculation
+
+Given:
+- Primary trucker handles 1,716,279 tons annually
+- Peak month: 255,219 tons in September
+- 82 named drivers + 876 unattributed driver-days in peak month
+- 1,252 shifts in peak month
+
+Fleet size estimates:
+- **Annual average method**: 1,716,279 ÷ 13,500 = ~127 trucks
+- **Peak daily method**: 255,219 tons ÷ 22 days = 11,601 tons/day; 11,601 ÷ 25 tons/load = 464 trips/day; 464 ÷ 3 trips/truck = ~155 trucks needed in peak
+- **Conclusion**: Fleet likely sized at 120-140 trucks (100-120 base + 20-40 flex capacity)
+
+Replacement challenge:
+- Next largest trucker handles only 143K tons (equivalent of ~11 trucks)
+- Would need to combine 10-12 other truckers to match capacity
+- Building a 120-140 truck operation requires $25-50M+ in assets and takes years
