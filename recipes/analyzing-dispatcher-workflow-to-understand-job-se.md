@@ -1,120 +1,129 @@
 ---
-title: Analyzing dispatcher workflow to understand job selection criteria
-when: When you need to understand how a dispatcher decides which jobs and shifts to include in a lineup, or when trying to identify the business logic/selection criteria behind lineup creation decisions
+title: Analyzing dispatcher workflow to understand job selection and trucker assignment
+when: When you need to understand how a dispatcher decides which jobs and shifts to include in a lineup, how truckers are assigned to lineup shifts, or when trying to identify the business logic/selection criteria behind lineup creation and dispatch decisions
 ---
 
-## Problem
+# Analyzing dispatcher workflow to understand job selection and trucker assignment
 
-You need to understand the dispatcher's decision-making process: which jobs get added to lineups, which shifts within those jobs are selected, and what criteria guide these choices.
+## Context
+Dispatchers create lineups by selecting jobs and shifts, then assigning truckers to those shifts before dispatching. Understanding this workflow requires tracing through multiple resources and understanding the relationship between job-schedule-shifts and lineup-job-schedule-shifts.
 
-## Approach
+## Key Concepts
 
-This is a multi-step investigative analysis that reveals both what the dispatcher did AND what domain knowledge is still hidden.
+### Job Schedule Shift vs Lineup Job Schedule Shift
+- **job-schedule-shift**: Represents a shift that needs to be worked (created earlier, may have accepted-trucker through tender system)
+- **lineup-job-schedule-shift**: Represents that same shift AS PART OF A LINEUP, with its own `trucker` field that the dispatcher sets
+- The trucker assignment decision happens on the **lineup-job-schedule-shift**, not the job-schedule-shift
 
-### Step 1: Identify the lineup and get basic scope
+## Complete Dispatcher Workflow
 
+### Step 1: Add Jobs to Lineup
 ```bash
-# Find lineups for the broker in the target date range
-xbe view lineups list --broker <broker-id> --json --limit 100
-
-# Get details on a specific lineup
-xbe view lineups show <lineup-id> --json
-
-# Count shifts in the lineup
-xbe view lineup-job-schedule-shifts list --lineup <lineup-id> --json --limit 200 | jq 'length'
+# Add job production plan to lineup
+xbe do lineup-job-production-plans create \
+  --lineup <lineup-id> \
+  --job-production-plan <job-production-plan-id>
 ```
 
-### Step 2: Trace which jobs were added to the lineup
-
+### Step 2: Create Lineup Shifts (Without Trucker)
 ```bash
-# Get all lineup-job-production-plans for this lineup
-xbe view lineup-job-production-plans list --lineup <lineup-id> --fields job-production-plan,created-by,created-at --json --limit 100
-
-# Extract unique job production plan IDs
-xbe view lineup-job-production-plans list --lineup <lineup-id> --json --limit 100 | jq -r '.[]."job-production-plan-id"' | sort -u
-
-# Count how many jobs were added
-xbe view lineup-job-production-plans list --lineup <lineup-id> --json --limit 100 | jq -r '.[]."job-production-plan-id"' | sort -u | wc -l
+# Create lineup shift (no trucker assignment yet)
+lineup_shift_id=$(xbe do lineup-job-schedule-shifts create \
+  --lineup <lineup-id> \
+  --job-schedule-shift <job-schedule-shift-id> \
+  --is-ready-to-dispatch false \
+  --json | jq -r '.id')
 ```
 
-### Step 3: Understand the total universe of possible jobs
-
+### Step 3: Assign Trucker to Lineup Shift
 ```bash
-# Get all job production plans for the same date and broker
-xbe view job-production-plans list --start-date <date> --broker <broker-id> --json --limit 500 | jq 'length'
-
-# This reveals the selection ratio: X jobs chosen out of Y total
+# Update lineup shift with trucker assignment
+xbe do lineup-job-schedule-shifts update <lineup-shift-id> \
+  --trucker <trucker-id> \
+  --is-ready-to-dispatch true
 ```
 
-### Step 4: Analyze shift selection within chosen jobs
-
+### Step 4: Dispatch the Lineup
 ```bash
-# For each job production plan, count total shifts
-xbe view job-schedule-shifts list --start-date <date> --job-production-plan <job-production-plan-id> --json | jq 'length'
-
-# Compare to how many shifts from that job made it into the lineup
-xbe view lineup-job-schedule-shifts list --lineup <lineup-id> --json --limit 200 | jq '[.[] | select(."job-production-plan-id" == "<job-production-plan-id>")] | length'
-
-# Calculate selection ratio for shifts
+# Dispatch all ready shifts
+xbe do lineup-dispatches create --lineup <lineup-id> \
+  --auto-offer-trucker-tenders true \
+  --auto-offer-customer-tenders true
 ```
 
-### Step 5: Look for selection criteria indicators
+## Analyzing Selection Criteria
 
-Check if there's a field that indicates "needs lineup dispatch":
+To understand WHY a dispatcher chose specific jobs/shifts/truckers:
 
+### Find What Jobs Were Added
 ```bash
-# Check available fields on job-schedule-shifts
-xbe view job-schedule-shifts show <shift-id> --json | jq 'keys'
-
-# Test potential filtering fields like is-managed
-xbe view job-schedule-shifts list --start-date <date> --broker <broker-id> --is-managed true --json --limit 500 | jq 'length'
-
-# Compare managed shift count to lineup shift count
+# Get all job production plans in a lineup
+xbe view lineup-job-production-plans list \
+  --lineup <lineup-id> \
+  --json
 ```
 
-### Step 6: Analyze temporal patterns
+### Find What Shifts Were Created
+```bash
+# Get all lineup shifts with trucker assignments
+xbe view lineup-job-schedule-shifts list \
+  --lineup <lineup-id> \
+  --fields trucker,job-schedule-shift,is-ready-to-dispatch \
+  --json
+```
 
-Use the "Analyzing lineup shift creation patterns and dispatcher behavior" recipe to understand:
-- How shifts were added over time (batch patterns)
-- Whether there were multiple data entry sessions
-- Company-by-company entry patterns
+### Analyze Creation Timeline
+```bash
+# See when shifts were added (batch patterns)
+xbe view lineup-job-schedule-shifts list \
+  --lineup <lineup-id> \
+  --fields created-at,trucker,job-schedule-shift \
+  --json | jq -r '.[] | "\(."created-at") - Trucker: \(.trucker."company-name" // "none") - Shift: \(."job-schedule-shift-id")"'
+```
 
-### Step 7: Identify knowledge gaps
+### Find Selection Patterns
+```bash
+# Group by trucker to see if dispatcher assigned company-by-company
+xbe view lineup-job-schedule-shifts list \
+  --lineup <lineup-id> \
+  --json | jq 'group_by(."trucker-id") | map({trucker: .[0].trucker."company-name", count: length})'
+```
 
-Document what you CAN'T determine from the data:
-- Why specific jobs were selected vs others
-- Why specific shifts within a job were selected
-- What business rules or customer contracts drive selection
-- What constitutes "complete" for the dispatcher
-- How exceptions are handled
+## Common Patterns
 
-## Key Insight
+### Company-by-Company Assignment
+Dispatchers often assign all shifts for one trucker before moving to the next:
+```bash
+# Look for temporal clustering by trucker
+xbe view lineup-job-schedule-shifts list \
+  --lineup <lineup-id> \
+  --sort created-at \
+  --fields created-at,trucker \
+  --json
+```
 
-The data shows WHAT the dispatcher did but not WHY. Observable patterns include:
-- Job-level filtering (some subset of available jobs)
-- Shift-level filtering (some subset of shifts within chosen jobs)
-- Temporal/batching patterns (how shifts are entered)
-- Company grouping patterns (shifts grouped by trucker)
+### Job-by-Job Assignment
+Or they might assign all shifts for one job before moving to the next:
+```bash
+# Group by job to see job-level patterns
+xbe view lineup-job-schedule-shifts list \
+  --lineup <lineup-id> \
+  --json | jq 'group_by(."job-schedule-shift"."job-id") | map({job: .[0]."job-schedule-shift".job.name, shifts: length})'
+```
 
-But the selection criteria remain implicit domain knowledge:
-- Customer contract requirements
-- Trucker type (brokered vs self-managed)
-- Job priority or urgency
-- Capacity constraints
-- Relationship management factors
+## Integration with ML Recommendations
 
-## Example Analysis Output
+See the "Using ML-powered trucker assignment recommendations for lineup shifts" recipe for how to integrate machine learning recommendations into Step 3 above.
 
-"For lineup 235396 on Oct 1, 2025:
-- 11 job production plans added (out of 60 total jobs that day)
-- 130 shifts added (out of 388 total shifts across those 11 jobs)
-- 326 total managed shifts existed, but only 130 went into lineup
-- Selection criteria unclear: no single field like is-managed fully explains the selection
-- Dispatcher spent 1+ hour adding shifts in company-grouped batches
-- Domain knowledge required: Why these 11 jobs? Why these 130 shifts?"
+## Troubleshooting
 
-## Related Recipes
+### Trucker Shows on Shift But Can't Be Set
+If `xbe view job-schedule-shifts` shows a trucker but you can't set it with `--trucker`, that's because:
+- The trucker on job-schedule-shift comes from `accepted-broker-tender` (tender system)
+- To assign for lineup purposes, you set `--trucker` on the **lineup-job-schedule-shift**
+- These are separate fields serving different purposes
 
-- "Analyzing lineup shift creation patterns and dispatcher behavior" - for temporal analysis
-- "Tracing lineup shift batch creation and dispatch timeline patterns" - for understanding batch entry
-- "Tracing the complete lifecycle of a lineup dispatch" - for end-to-end process understanding
+### Understanding the Two Trucker Fields
+- `job-schedule-shift.accepted-trucker`: Set through tender acceptance system
+- `lineup-job-schedule-shift.trucker`: Set by dispatcher for lineup dispatch
+- They may or may not be the same trucker
